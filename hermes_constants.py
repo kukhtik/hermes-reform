@@ -1181,6 +1181,24 @@ def apply_subprocess_home_env(env: dict[str, str]) -> None:
         env["HOME"] = home
 
 
+def get_subprocess_env(overrides: dict | None = None) -> dict:
+    """Build a subprocess environment dict with mandatory HERMES_HOME.
+
+    Returns a copy of ``os.environ`` with ``HERMES_HOME`` set to
+    ``str(get_hermes_home())``, plus any caller-provided *overrides*
+    applied last so they win.
+
+    This is the canonical helper for every subprocess spawn site that
+    needs to propagate the active profile's Hermes home to its children
+    (issue #18594).
+    """
+    env: dict = dict(os.environ)
+    env["HERMES_HOME"] = str(get_hermes_home())
+    if overrides:
+        env.update(overrides)
+    return env
+
+
 VALID_REASONING_EFFORTS = (
     "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 )
