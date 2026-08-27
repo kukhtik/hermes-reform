@@ -161,6 +161,74 @@ _active_subagents: Dict[str, Dict[str, Any]] = {}
 _RECENT_SUBAGENTS_CAP = 200
 _recent_subagents: Dict[str, Dict[str, Any]] = {}
 
+# ---------------------------------------------------------------------------
+# Per-session budget counters for child token and API call consumption
+#
+# Tracked in-memory (session-local, reset on new session). Thread-safe.
+# Read by _check_session_budget before spawning; written by
+# _increment_session_counters after each child completes.
+# ---------------------------------------------------------------------------
+_SESSION_COUNTERS: Dict[str, Dict[str, int]] = {}
+_session_counters_lock = threading.Lock()
+
+
+def _get_session_counters(session_id: str) -> Dict[str, int]:
+    with _session_counters_lock:
+        return _SESSION_COUNTERS.get(session_id, {"tokens": 0, "api_calls": 0}).copy()
+
+
+def _increment_session_counters(
+    session_id: str, *, tokens: int = 0, api_calls: int = 0
+) -> None:
+    with _session_counters_lock:
+        if session_id not in _SESSION_COUNTERS:
+            _SESSION_COUNTERS[session_id] = {"tokens": 0, "api_calls": 0}
+        _SESSION_COUNTERS[session_id]["tokens"] += tokens
+        _SESSION_COUNTERS[session_id]["api_calls"] += api_calls
+
+
+def _reset_session_counters(session_id: str) -> None:
+    with _session_counters_lock:
+        _SESSION_COUNTERS.pop(session_id, None)
+
+
+def _check_session_budget(
+    session_id: str,
+    batch_size: int,
+    estimated_tokens: int,
+    estimated_api_calls: int,
+) -> tuple[bool, str]:
+    """Check if a batch would exceed per-session budget caps.
+
+    Returns (allowed, error_detail). allowed=True means proceed; allowed=False
+    means error_detail explains which cap was hit and by how much.
+    """
+    cfg = _load_config()
+    max_tokens = cfg.get("max_child_tokens_total", 5_000_000)
+    max_api_calls = cfg.get("max_child_api_calls_total", 500)
+
+    with _session_counters_lock:
+        current = _SESSION_COUNTERS.get(session_id, {"tokens": 0, "api_calls": 0})
+        consumed_tokens = current["tokens"]
+        consumed_api = current["api_calls"]
+
+    projected_tokens = consumed_tokens + estimated_tokens
+    projected_api = consumed_api + estimated_api_calls
+
+    if projected_tokens > max_tokens:
+        return (
+            False,
+            f"max_child_tokens_total exceeded: consumed {consumed_tokens:,} / "
+            f"{max_tokens:,}, batch requests {estimated_tokens:,} more",
+        )
+    if projected_api > max_api_calls:
+        return (
+            False,
+            f"max_child_api_calls_total exceeded: consumed {consumed_api} / "
+            f"{max_api_calls}, batch requests {estimated_api_calls} more",
+        )
+    return True, ""
+
 
 def get_subagent_attribution(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """Resolve a process task_id to its originating delegation, if any.
@@ -3776,6 +3844,21 @@ def delegate_task(
 
     if not task_list:
         return tool_error("No tasks provided.")
+
+    # Per-session budget cap — reject the entire batch before spawning anything.
+    session_id = getattr(parent_agent, "_session_id", None) or "default"
+    # Projected footprint: conservative estimate (1 child ≈ 100k tokens, 10 api calls)
+    est_tokens = len(task_list) * 100_000
+    est_api = len(task_list) * 10
+    budget_ok, budget_detail = _check_session_budget(
+        session_id, len(task_list), est_tokens, est_api
+    )
+    if not budget_ok:
+        return tool_error(
+            f"Batch BUDGET_EXCEEDED: {budget_detail}",
+            code="BUDGET_EXCEEDED",
+            detail=budget_detail,
+        )
 
     # Validate each task has a goal
     for i, task in enumerate(task_list):
