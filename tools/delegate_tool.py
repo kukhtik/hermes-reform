@@ -58,6 +58,12 @@ DELEGATE_BLOCKED_TOOLS = frozenset(
 )
 
 
+class DelegationError(Exception):
+    """Raised when delegation pool is saturated and allow_sync_fallback=false."""
+
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Subagent approval callbacks
 # ---------------------------------------------------------------------------
@@ -4346,6 +4352,12 @@ def delegate_task(
         # Pool at capacity / schedule failure — children are still attached
         # (we detach above only on the parent list, but the async unit was
         # never accepted, so re-attaching isn't needed: we just run inline).
+        _cfg = _load_config()
+        if not _cfg.get("allow_sync_fallback", False):
+            raise DelegationError(
+                "delegation pool saturated and allow_sync_fallback=false; "
+                "increase delegation.max_concurrent_children or wait for running tasks"
+            )
         logger.info(
             "delegate_task: async pool at capacity (%s); running the whole "
             "batch synchronously instead.",
