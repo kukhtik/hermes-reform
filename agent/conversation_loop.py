@@ -3135,6 +3135,9 @@ def run_conversation(
                         thinking_spinner = None
                     if agent.thinking_callback:
                         agent.thinking_callback("")
+                    # Cancel all in-flight httpx streams on stop signal (F0.5)
+                    from agent.cancellation import cancel_all
+                    cancel_all()
 
                 _use_streaming = True
                 # Provider signaled "stream not supported" on a previous
