@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 try:
     from hermes_cli.config import load_config_readonly
     config = load_config_readonly()
-except Exception:
+except (ImportError, ModuleNotFoundError, OSError) as e:
+    logger.warning("background_review: could not load config — falling back to empty config: %s", e)
     config = {}
 
 

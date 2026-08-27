@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Nitro\hermes-reform-local\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Nitro\wt-hermes-reform\f02
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/agent/test_background_review_max_iterations.py::TestBackgroundMaxIterationsCap::test_curator_respects_ceiling PASSED [ 25%]
+tests/agent/test_background_review_max_iterations.py::TestBackgroundMaxIterationsCap::test_review_fork_respects_ceiling PASSED [ 50%]
+tests/agent/test_background_review_max_iterations.py::TestBackgroundMaxIterationsCap::test_absolute_cap_100 PASSED [ 75%]
+tests/agent/test_background_review_max_iterations.py::TestBackgroundMaxIterationsCap::test_default_value_100_from_config PASSED [100%]
+
+============================== 4 passed in 0.88s ==============================

@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 try:
     from hermes_cli.config import load_config_readonly
     config = load_config_readonly()
-except Exception:
+except (ImportError, ModuleNotFoundError, OSError) as e:
+    logger.warning("curator: could not load config — falling back to empty config: %s", e)
     config = {}
 
 
@@ -148,8 +149,8 @@ def _load_config() -> Dict[str, Any]:
     try:
         from hermes_cli.config import load_config_readonly
         cfg = load_config_readonly()
-    except Exception as e:
-        logger.debug("Failed to load config for curator: %s", e)
+    except (ImportError, ModuleNotFoundError, OSError) as e:
+        logger.warning("curator: could not load config — falling back to empty config: %s", e)
         return {}
     if not isinstance(cfg, dict):
         return {}

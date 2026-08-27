@@ -18,7 +18,6 @@ class TestBackgroundMaxIterationsCap:
     def test_curator_respects_ceiling(self):
         """Curator fork must read max_iterations from config, not hardcode 9999."""
         import agent.curator
-        from unittest.mock import MagicMock
 
         # Save original config
         original_config = agent.curator.config
@@ -39,7 +38,6 @@ class TestBackgroundMaxIterationsCap:
     def test_review_fork_respects_ceiling(self):
         """Review fork must use background_max_iterations from config."""
         import agent.background_review
-        from unittest.mock import MagicMock
 
         # Save original config
         original_config = agent.background_review.config
@@ -58,15 +56,20 @@ class TestBackgroundMaxIterationsCap:
 
     def test_absolute_cap_100(self):
         """Any config value > 100 must be capped to 100 (hard cap enforcement)."""
-        from hermes_cli import config_defaults
+        import agent.curator
 
-        # Directly inspect the resolved cap
-        requested = 9999
-        capped = min(requested, 100)
-        assert capped == 100, f"Hard cap must enforce 100; requested={requested}, got={capped}"
+        # Save original config
+        original_config = agent.curator.config
 
-        # Verify config default is exactly 100
-        assert config_defaults.DEFAULT_CONFIG["agent"]["background_max_iterations"] == 100
+        # Set a config value > 100 (150) — the production function must cap it at 100
+        agent.curator.config = {"agent": {"background_max_iterations": 150}}
+        try:
+            result = agent.curator._bg_max_iters()
+            assert result == 100, (
+                f"Config value 150 must be hard-capped to 100, got {result}"
+            )
+        finally:
+            agent.curator.config = original_config
 
     def test_default_value_100_from_config(self):
         """Default background_max_iterations must be 100."""
