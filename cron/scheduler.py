@@ -2516,12 +2516,18 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str) -> Optional[str]
         except Exception:
             return "bot-chat delivery failed: hermes CLI not resolvable"
 
-    env = os.environ.copy()
+    # Use get_subprocess_env() so the child always inherits HERMES_HOME.
+    # For profile-specific delivery, the override below strips it so -p wins.
+    from hermes_constants import get_subprocess_env
+    env = get_subprocess_env()
     if profile:
         argv += ["-p", profile]
         # -p owns profile resolution in the child; a leftover HERMES_HOME
         # from THIS scheduler's profile must not shadow it.
-        env.pop("HERMES_HOME", None)
+        # Use get_subprocess_env with an empty-override to strip HERMES_HOME
+        # rather than manually copying os.environ.
+        from hermes_constants import get_subprocess_env
+        env = get_subprocess_env(overrides={"HERMES_HOME": ""})
 
     # The prefix tells the receiving bot this is scheduled output, not the
     # human typing — mirrors the Bot Mode sender-attribution convention.

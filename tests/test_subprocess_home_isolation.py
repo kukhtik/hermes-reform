@@ -107,8 +107,8 @@ class TestGetSubprocessHome:
         assert home_a is not None
         assert home_b is not None
         assert home_a != home_b
-        assert home_a.endswith("alpha/home")
-        assert home_b.endswith("beta/home")
+        assert home_a.endswith("alpha/home") or home_a.endswith("alpha\\home")
+        assert home_b.endswith("beta/home") or home_b.endswith("beta\\home")
 
 
 
@@ -255,7 +255,69 @@ class TestProfileBootstrap:
         assert (profile_dir / "home").is_dir()
 
 
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------------- #
+# get_subprocess_env() — mandatory HERMES_HOME propagation (F0.7 / #18594)
+# ------------------------------------------------------------------------- #
+
+
+class TestGetSubprocessEnv:
+    """Unit tests for hermes_constants.get_subprocess_env()."""
+
+    def test_helper_contains_hermes_home(self, monkeypatch):
+        """get_subprocess_env() result must contain HERMES_HOME."""
+        import os
+        from pathlib import Path
+        from hermes_constants import get_subprocess_env
+
+        fake_home = Path("C:/fake-hermes-home")
+        monkeypatch.setenv("HERMES_HOME", str(fake_home))
+
+        env = get_subprocess_env()
+        assert "HERMES_HOME" in env, "HERMES_HOME must be in subprocess env"
+        assert env["HERMES_HOME"] == str(fake_home)
+
+    def test_helper_overrides_merge_on_top(self, monkeypatch):
+        """overrides are applied AFTER the base HERMES_HOME, winning over it."""
+        from pathlib import Path
+        from hermes_constants import get_subprocess_env
+
+        base_home = Path("C:/base-home")
+        override_home = Path("C:/override-home")
+        monkeypatch.setenv("HERMES_HOME", str(base_home))
+
+        env = get_subprocess_env(overrides={"HERMES_HOME": str(override_home)})
+        assert env["HERMES_HOME"] == str(override_home)
+
+    def test_helper_overrides_can_add_other_vars(self, monkeypatch):
+        """overrides can add other env vars alongside HERMES_HOME."""
+        from pathlib import Path
+        from hermes_constants import get_subprocess_env
+
+        monkeypatch.setenv("HERMES_HOME", str(Path("C:/home")))
+        env = get_subprocess_env(overrides={"FOO": "bar"})
+        assert env["FOO"] == "bar"
+        assert "HERMES_HOME" in env
+
+    def test_static_spawn_sites_have_hermes_home(self):
+        """Static: the two key cron/scheduler.py spawn sites mention HERMES_HOME."""
+        base = Path("C:/Users/Nitro/wt-hermes-reform/f7")
+        checks = [
+            # Line of the env=... assignment before subprocess.run (not the subprocess line itself)
+            (base / "cron/scheduler.py", 2522, "bot-chat delivery: env = get_subprocess_env()"),
+            (base / "hermes_cli/profiles.py", 1337, "skill seed: env={**..., HERMES_HOME}"),
+        ]
+        missing = []
+        for fpath, lineno, desc in checks:
+            if not fpath.exists():
+                missing.append(f"{fpath}: file missing"); continue
+            lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
+            ctx = "\n".join(lines[max(0, lineno - 2):lineno + 1])
+            if not any(p in ctx for p in ["HERMES_HOME", "get_subprocess_env", "build_subprocess_env"]):
+                missing.append(f"{fpath.name}:{lineno} ({desc})")
+        assert not missing, "Spawn sites missing HERMES_HOME:\n" + "\n".join(missing)
+
+
+# -------------------------------------------------------------------------- #
 # Python process HOME unchanged
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------------- #
 
