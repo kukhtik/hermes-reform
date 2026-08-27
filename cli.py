@@ -55,6 +55,7 @@ from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 from hermes_cli.cli_commands_mixin import CLICommandsMixin
 from hermes_cli.cli_billing_mixin import CLIBillingMixin
 from agent.interrupt_compat import request_hard_interrupt
+from agent.termination_markers import _emit_terminated
 
 # prompt_toolkit for fixed input area TUI
 from prompt_toolkit.history import FileHistory
@@ -1118,6 +1119,7 @@ def _arm_exit_watchdog(timeout_s: float | None = None, *, from_signal: bool = Fa
                 _stream.flush()
             except Exception:
                 pass
+        _emit_terminated(reason="exit_watchdog_fired", exit_code=0)
         os._exit(0)
 
     try:
@@ -21391,6 +21393,7 @@ def main(
                     _stream.flush()
                 except Exception:
                     pass
+            _emit_terminated(reason="kanban_sigterm", exit_code=0)
             os._exit(0)
         raise KeyboardInterrupt()
     try:
