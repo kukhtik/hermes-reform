@@ -5563,7 +5563,7 @@ def set_config_value(key: str, value: str, force: bool = False):
         # after coercion, `value` is already a Python object and isinstance
         # checks below handle it correctly.
         validated = validate_fallback_providers(value)
-        # Reject empty list with a warning (non-fatal)
+        # Allow empty list with a warning
         if not validated:
             print(
                 "WARN: empty fallback_providers set; "
