@@ -14,11 +14,12 @@ Usage:
     hermes setup               # Interactive setup wizard
     hermes logout              # Clear stored authentication
     hermes status              # Show status of all components
-    hermes cron                # Manage cron jobs
-    hermes cron list           # List cron jobs
-    hermes cron status         # Check if cron scheduler is running
-    hermes doctor              # Check configuration and dependencies
-    hermes honcho setup                    # Configure Honcho AI memory integration
+    hermes cron                Manage cron jobs
+    hermes cron list           List cron jobs
+    hermes cron status         Check if cron scheduler is running
+    hermes doctor              Check configuration and dependencies
+    hermes delegation status   Show per-session child token and API-call budget
+    hermes honcho setup                    Configure Honcho AI memory integration
     hermes honcho status                   # Show Honcho config and connection status
     hermes honcho sessions                 # List directory → session name mappings
     hermes honcho map <name>               # Map current directory to a session name
@@ -13531,6 +13532,12 @@ def main():
     )
     from hermes_cli.checkpoints import register_cli as _register_checkpoints_cli
     _register_checkpoints_cli(checkpoints_parser)
+
+    # =========================================================================
+    # delegation command  (parser built in hermes_cli/delegation_status.py)
+    # =========================================================================
+    from hermes_cli.delegation_status import register_cli as _register_delegation_cli
+    _register_delegation_cli(subparsers)
 
     # =========================================================================
     # import command  (parser built in hermes_cli/subcommands/import_cmd.py)

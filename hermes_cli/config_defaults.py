@@ -2036,14 +2036,21 @@ DEFAULT_CONFIG = {
         "max_concurrent_children": 10,  # unified concurrency cap: max parallel children per batch
                                       # AND max concurrent background (background=true)
                                       # delegation units. New async dispatches beyond the cap
-                                      # fall back to synchronous execution when allow_sync_fallback=true.
-                                      # Floor of 1, no ceiling.
+                                      # fall back to synchronous execution. Floor of 1, no ceiling.
                                       # (Replaces the deprecated max_async_children.)
         "allow_sync_fallback": False,  # when True: async pool saturation silently falls back to
                                        # synchronous execution (legacy behaviour, creates unbounded
                                        # sessions — see issue #52868). When False (default): raises
                                        # a loud DelegationError instead so the caller can decide
                                        # whether to wait or increase max_concurrent_children.
+        # Per-session budget caps for all children in this session. Both limits
+        # apply to the cumulative projected consumption of a batch (sum of each
+        # child's estimated token + API call footprint). When a batch would
+        # exceed either cap, it is rejected before any child is spawned.
+        # These are SESSION-LOCAL and reset on each new session — they do NOT
+        # persist or aggregate across sessions (Phase 6 dashboards own that).
+        "max_child_tokens_total": 5_000_000,
+        "max_child_api_calls_total": 500,
         # Orchestrator role controls (see tools/delegate_tool.py:_get_max_spawn_depth
         # and _get_orchestrator_enabled).  Floored at 1, no upper ceiling —
         # raise deliberately, each level multiplies API cost.
