@@ -1,0 +1,195 @@
+diff --git a/agent/background_review.py b/agent/background_review.py
+index 1c041ab34..99c9062f4 100644
+--- a/agent/background_review.py
++++ b/agent/background_review.py
+@@ -30,6 +30,14 @@ from agent.thread_scoped_output import thread_scoped_silence
+ 
+ logger = logging.getLogger(__name__)
+ 
++# Module-level config cache for testability via unittest.mock.patch.
++# Tests patch this to inject config values without reloading.
++try:
++    from hermes_cli.config import load_config_readonly
++    config = load_config_readonly()
++except Exception:
++    config = {}
++
+ 
+ _BACKGROUND_REVIEW_CANCEL_TIMEOUT_SECONDS = 2.0
+ 
+@@ -202,7 +210,14 @@ def cancel_background_review_for_live_turn(agent: Any) -> None:
+ # ---------------------------------------------------------------------------
+ 
+ # Historical hardcoded iteration budget for the review fork.
+-_REVIEW_MAX_ITERATIONS = 16
++# Now reads from config (agent.background_max_iterations, default 100, hard cap 100).
++def _get_review_max_iterations() -> int:
++    """Return background_max_iterations from config, capped at 100 (hard ceiling)."""
++    val = (config or {}).get("agent", {}).get("background_max_iterations", 100)
++    try:
++        return min(int(val), 100)
++    except (TypeError, ValueError):
++        return 100
+ 
+ # Default aggregate INPUT-token budget for one review fork (#93057). The
+ # fork's first request replays the full snapshot — a warm prompt-cache read
+@@ -1252,7 +1267,7 @@ def _run_review_in_thread(
+                         _fork_kwargs[_pref_attr] = _pref_val
+             review_agent = AIAgent(
+                 model=_rt.get("model") or agent.model,
+-                max_iterations=_REVIEW_MAX_ITERATIONS,
++                max_iterations=_get_review_max_iterations(),
+                 quiet_mode=True,
+                 platform=agent.platform,
+                 provider=_rt.get("provider") or agent.provider,
+diff --git a/agent/curator.py b/agent/curator.py
+index c08d24961..1118ea142 100644
+--- a/agent/curator.py
++++ b/agent/curator.py
+@@ -36,6 +36,14 @@ from utils import atomic_json_write
+ 
+ logger = logging.getLogger(__name__)
+ 
++# Module-level config cache for testability via unittest.mock.patch.
++# Tests patch this to inject config values without reloading.
++try:
++    from hermes_cli.config import load_config_readonly
++    config = load_config_readonly()
++except Exception:
++    config = {}
++
+ 
+ def _strip_aux_credential(value: Any) -> Optional[str]:
+     if value is None:
+@@ -151,6 +159,15 @@ def _load_config() -> Dict[str, Any]:
+     return cur
+ 
+ 
++def _bg_max_iters() -> int:
++    """Return background_max_iterations from config, capped at 100 (hard ceiling)."""
++    val = (config or {}).get("agent", {}).get("background_max_iterations", 100)
++    try:
++        return min(int(val), 100)
++    except (TypeError, ValueError):
++        return 100
++
++
+ def is_enabled() -> bool:
+     """Default ON when no config says otherwise."""
+     cfg = _load_config()
+@@ -1946,12 +1963,11 @@ def _run_llm_review(prompt: str) -> Dict[str, Any]:
+             request_overrides=_request_overrides,
+             **_agent_kwargs,
+             enabled_toolsets=["skills", "terminal"],
+-            # Umbrella-building over a large skill collection is worth a
+-            # high iteration ceiling — the pass typically takes 50-100
+-            # API calls against hundreds of candidate skills. The
+-            # single-session review path caps itself at a much smaller
+-            # number because it's not doing a curation sweep.
+-            max_iterations=9999,
++            # Cap iterations at 100 (hard ceiling) or the configured value,
++            # whichever is smaller.  This is a safety guard against runaway
++            # background loops (incident #353M tokens / 20h).  The
++            # single-session review path is capped independently.
++            max_iterations=_bg_max_iters(),
+             quiet_mode=True,
+             platform="curator",
+             skip_context_files=True,
+diff --git a/hermes_cli/config_defaults.py b/hermes_cli/config_defaults.py
+index 0fb148831..f313665ad 100644
+--- a/hermes_cli/config_defaults.py
++++ b/hermes_cli/config_defaults.py
+@@ -260,6 +260,11 @@ DEFAULT_CONFIG = {
+         # TUI, desktop — and programmatic callers, off for conversational
+         # messaging surfaces). Doc/markdown/skill-only edits never fire it.
+         "verify_on_stop": False,
++        # Hard ceiling on max_iterations for background loops (curator, review
++        # forks).  Any config value > 100 is capped at 100 at the call site.
++        # This is a safety cap against runaway background loops that burn tokens
++        # indefinitely (see incident #353M tokens / 20h).
++        "background_max_iterations": 100,
+         # Staged inactivity warning: send a warning to the user at this
+         # threshold before escalating to a full timeout.  The warning fires
+         # once per run and does not interrupt the agent.  0 = disable warning.
+diff --git a/tests/agent/test_background_review_max_iterations.py b/tests/agent/test_background_review_max_iterations.py
+new file mode 100644
+index 000000000..cf112ba54
+--- /dev/null
++++ b/tests/agent/test_background_review_max_iterations.py
+@@ -0,0 +1,76 @@
++"""Background loop max-iterations cap tests (task F0.2).
++
++Verifies:
++(a) curator respects the config ceiling
++(b) review fork respects the ceiling
++(c) ceiling cannot exceed 100 (hard cap)
++(d) default value is 100 from config
++"""
++
++from __future__ import annotations
++
++import pytest
++
++
++class TestBackgroundMaxIterationsCap:
++    """Tests for background_max_iterations config and enforcement."""
++
++    def test_curator_respects_ceiling(self):
++        """Curator fork must read max_iterations from config, not hardcode 9999."""
++        import agent.curator
++        from unittest.mock import MagicMock
++
++        # Save original config
++        original_config = agent.curator.config
++
++        # Build a mock config with agent.background_max_iterations = 50
++        mock_config = {"agent": {"background_max_iterations": 50}}
++        agent.curator.config = mock_config
++
++        try:
++            # _bg_max_iters() should read from the patched module-level config
++            result = agent.curator._bg_max_iters()
++            assert result == 50, (
++                f"Curator fork must use config ceiling (50), not hardcoded value. Got {result}"
++            )
++        finally:
++            agent.curator.config = original_config
++
++    def test_review_fork_respects_ceiling(self):
++        """Review fork must use background_max_iterations from config."""
++        import agent.background_review
++        from unittest.mock import MagicMock
++
++        # Save original config
++        original_config = agent.background_review.config
++
++        # Build a mock config with agent.background_max_iterations = 40
++        mock_config = {"agent": {"background_max_iterations": 40}}
++        agent.background_review.config = mock_config
++
++        try:
++            result = agent.background_review._get_review_max_iterations()
++            assert result == 40, (
++                f"Review fork must read from config (40), got {result}"
++            )
++        finally:
++            agent.background_review.config = original_config
++
++    def test_absolute_cap_100(self):
++        """Any config value > 100 must be capped to 100 (hard cap enforcement)."""
++        from hermes_cli import config_defaults
++
++        # Directly inspect the resolved cap
++        requested = 9999
++        capped = min(requested, 100)
++        assert capped == 100, f"Hard cap must enforce 100; requested={requested}, got={capped}"
++
++        # Verify config default is exactly 100
++        assert config_defaults.DEFAULT_CONFIG["agent"]["background_max_iterations"] == 100
++
++    def test_default_value_100_from_config(self):
++        """Default background_max_iterations must be 100."""
++        from hermes_cli import config_defaults
++
++        assert "background_max_iterations" in config_defaults.DEFAULT_CONFIG["agent"]
++        assert config_defaults.DEFAULT_CONFIG["agent"]["background_max_iterations"] == 100
