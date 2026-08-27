@@ -5550,6 +5550,28 @@ def set_config_value(key: str, value: str, force: bool = False):
                 )
 
     value = coerced_value
+
+    # Validate fallback_providers shape BEFORE writing (issue #51560).
+    # The raw string value is passed in so we can try parsing it as JSON/YAML
+    # before it gets the standard coercion treatment; this catches the bug
+    # where a bare JSON string was stored verbatim and read-time returned [].
+    _fp_key = key.strip().lower()
+    if _fp_key == "fallback_providers":
+        from hermes_cli.fallback_config import validate_fallback_providers
+
+        # Pass the original string so validate can try JSON/YAML parsing itself;
+        # after coercion, `value` is already a Python object and isinstance
+        # checks below handle it correctly.
+        validated = validate_fallback_providers(value)
+        # Reject empty list with a warning (non-fatal)
+        if not validated:
+            print(
+                "WARN: empty fallback_providers set; "
+                "primary-provider failure will not failover.",
+                file=sys.stderr,
+            )
+        value = validated
+
     # Normalize a scalar ``model`` key before writing sub-keys so that
     # ``hermes config set model.provider openai`` doesn't silently
     # destroy the model id when ``model`` is a bare string shorthand
