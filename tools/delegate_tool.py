@@ -212,7 +212,8 @@ def _check_session_budget(
         consumed_tokens = current["tokens"]
         consumed_api = current["api_calls"]
 
-    projected_tokens = consumed_tokens + estimated_tokens
+    # Use batch_size for per-task projection: base_estimate_per_task * batch_size
+    projected_tokens = consumed_tokens + (batch_size * 100_000)
     projected_api = consumed_api + estimated_api_calls
 
     if projected_tokens > max_tokens:
@@ -3541,6 +3542,19 @@ def _finalize_child_results(
                     children_cost_total += float(child_cost)
             except (TypeError, ValueError):
                 pass
+            # Wire real token and API-call counters from child's usage.
+            try:
+                if parent_session_id:
+                    _increment_session_counters(
+                        parent_session_id,
+                        tokens=(
+                            entry.get("tokens", {}).get("input", 0)
+                            + entry.get("tokens", {}).get("output", 0)
+                        ),
+                        api_calls=entry.get("api_calls", 0),
+                    )
+            except Exception:
+                logger.debug("Failed to increment session counters", exc_info=True)
             if invoke_hook is None:
                 continue
             try:
