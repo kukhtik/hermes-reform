@@ -67,10 +67,12 @@ def test_termination_marker_reason_is_structured():
     with mock.patch.object(logging, "error") as mock_error:
         _emit_terminated(reason="budget_exhausted", exit_code=0, context={"tokens": 100})
         mock_error.assert_called_once()
-        call_args = mock_error.call_args[0][0]
-        assert "TERMINATED:" in call_args
-        assert "reason=budget_exhausted" in call_args
-        assert "exit_code=0" in call_args
+        fmt, reason_arg, exit_code_arg, ctx_arg = mock_error.call_args[0]
+        assert "TERMINATED:" in fmt
+        assert "reason=" in fmt
+        assert reason_arg == "budget_exhausted"
+        assert exit_code_arg == 0
+        assert ctx_arg == '{"tokens": 100}'
 
 
 def test_termination_marker_writes_jsonl_on_signal_exit(monkeypatch, tmp_path):

@@ -9,9 +9,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
-
 def _emit_terminated(
     reason: str,
     exit_code: int,
@@ -25,7 +22,7 @@ def _emit_terminated(
     ctx = context or {}
     marker = f"TERMINATED: reason={reason} exit_code={exit_code} context={json.dumps(ctx)}"
     try:
-        logger.error(marker)
+        logging.error("TERMINATED: reason=%s exit_code=%d context=%s", reason, exit_code, json.dumps(ctx))
     except Exception:
         # Logger may be in an invalid state during forced exit — fall back to stderr.
         sys.stderr.write(marker + "\n")
