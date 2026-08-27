@@ -3809,13 +3809,19 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
     managed_stream_holder = {"stream": None}
 
     def _set_managed_stream(stream: Any) -> Any:
+        from agent import cancellation as _cancellation
+
         managed_stream_holder["stream"] = stream
+        _cancellation.register_stream(stream)
         return stream
 
     def _close_managed_stream() -> None:
+        from agent import cancellation as _cancellation
+
         stream = managed_stream_holder.pop("stream", None)
         if stream is None:
             return
+        _cancellation.unregister_stream(stream)
         close = getattr(stream, "close", None)
         if callable(close):
             try:
