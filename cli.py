@@ -21368,10 +21368,15 @@ def main(
         if os.environ.get("HERMES_KANBAN_TASK"):
             try:
                 import signal as _sig_mod
+
+                def _sigalrm_deadman_handler(signum, frame):
+                    _emit_terminated(reason="sigalrm_deadman", exit_code=0)
+                    os._exit(0)
+
                 if hasattr(_sig_mod, "SIGALRM"):
                     # Cancel any pre-existing alarm to avoid colliding with
                     # caller-installed timers.
-                    _sig_mod.signal(_sig_mod.SIGALRM, lambda *_: os._exit(0))
+                    _sig_mod.signal(_sig_mod.SIGALRM, _sigalrm_deadman_handler)
                     _sig_mod.alarm(5)
             except Exception:
                 pass

@@ -100,7 +100,7 @@ def test_termination_marker_writes_jsonl_on_signal_exit(monkeypatch, tmp_path):
 
 
 def test_cli_has_emit_terminated_on_exit_paths():
-    """Every os._exit in cli.py is preceded by _emit_terminated call."""
+    """Every os._exit in cli.py is preceded by _emit_terminated call within 3 lines."""
     import cli as cli_module
     import inspect
     import ast
@@ -108,8 +108,9 @@ def test_cli_has_emit_terminated_on_exit_paths():
     source = inspect.getsource(cli_module)
     tree = ast.parse(source)
 
-    os_exit_lines = []
-    emit_terminated_nearby_lines = []
+    os_exit_sites = []  # list of (os_exit_lineno, surrounding_lines)
+    # Get all lines for context checking
+    source_lines = source.splitlines()
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -119,13 +120,25 @@ def test_cli_has_emit_terminated_on_exit_paths():
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "os"
             ):
-                os_exit_lines.append(node.lineno)
+                lineno = node.lineno
+                # Grab 3 lines of PRECEDING context (the emit + os._exit pair).
+                window = source_lines[max(0, lineno - 4) : lineno + 1]
+                os_exit_sites.append((lineno, window))
 
-    # Check that _emit_terminated is imported/defined in cli module
     assert hasattr(cli_module, "_emit_terminated"), (
         "cli.py must define or import _emit_terminated"
     )
 
-    # Verify the static check: grep -n os._exit cli.py | wc -l should match
-    # the number of distinct exit sites we know about.
-    assert len(os_exit_lines) >= 1, "At least one os._exit site expected in cli.py"
+    assert len(os_exit_sites) >= 1, "At least one os._exit site expected in cli.py"
+
+    # Per-site check: each os._exit must have _emit_terminated in the 3 preceding lines.
+    missing = []
+    for lineno, window in os_exit_sites:
+        window_text = "\n".join(window)
+        if "_emit_terminated" not in window_text:
+            missing.append(lineno)
+
+    assert not missing, (
+        f"os._exit at line(s) {missing} lack _emit_terminated within 3 lines. "
+        f"Each os._exit site must be immediately preceded by _emit_terminated call."
+    )

@@ -21,12 +21,16 @@ def _emit_terminated(
     """
     ctx = context or {}
     marker = f"TERMINATED: reason={reason} exit_code={exit_code} context={json.dumps(ctx)}"
+    # Always write to stderr first — logging may be shut down by the caller.
+    try:
+        print(marker, file=sys.stderr)
+    except Exception:
+        pass
+    # Best-effort structured logging (may be no-op after logging.shutdown()).
     try:
         logging.error("TERMINATED: reason=%s exit_code=%d context=%s", reason, exit_code, json.dumps(ctx))
     except Exception:
-        # Logger may be in an invalid state during forced exit — fall back to stderr.
-        sys.stderr.write(marker + "\n")
-        sys.stderr.flush()
+        pass
 
     # Write to ~/.hermes/errors/<date>/<session_id>.jsonl when path is available.
     try:
@@ -37,7 +41,9 @@ def _emit_terminated(
             err_dir = Path(hermes_home) / "errors" / today
             err_dir.mkdir(parents=True, exist_ok=True)
             line = json.dumps({"session_id": session_id, "reason": reason, "exit_code": exit_code, "context": ctx})
-            (err_dir / f"{session_id}.jsonl").open("a").write(line + "\n")
+            with (err_dir / f"{session_id}.jsonl").open("a") as f:
+                f.write(line + "\n")
+                f.flush()
     except Exception:
         # Best-effort — any failure must not block the os._exit path.
         pass
