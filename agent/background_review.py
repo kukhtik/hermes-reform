@@ -30,6 +30,14 @@ from agent.thread_scoped_output import thread_scoped_silence
 
 logger = logging.getLogger(__name__)
 
+# Module-level config cache for testability via unittest.mock.patch.
+# Tests patch this to inject config values without reloading.
+try:
+    from hermes_cli.config import load_config_readonly
+    config = load_config_readonly()
+except Exception:
+    config = {}
+
 
 _BACKGROUND_REVIEW_CANCEL_TIMEOUT_SECONDS = 2.0
 
@@ -202,7 +210,14 @@ def cancel_background_review_for_live_turn(agent: Any) -> None:
 # ---------------------------------------------------------------------------
 
 # Historical hardcoded iteration budget for the review fork.
-_REVIEW_MAX_ITERATIONS = 16
+# Now reads from config (agent.background_max_iterations, default 100, hard cap 100).
+def _get_review_max_iterations() -> int:
+    """Return background_max_iterations from config, capped at 100 (hard ceiling)."""
+    val = (config or {}).get("agent", {}).get("background_max_iterations", 100)
+    try:
+        return min(int(val), 100)
+    except (TypeError, ValueError):
+        return 100
 
 # Default aggregate INPUT-token budget for one review fork (#93057). The
 # fork's first request replays the full snapshot — a warm prompt-cache read
@@ -1252,7 +1267,7 @@ def _run_review_in_thread(
                         _fork_kwargs[_pref_attr] = _pref_val
             review_agent = AIAgent(
                 model=_rt.get("model") or agent.model,
-                max_iterations=_REVIEW_MAX_ITERATIONS,
+                max_iterations=_get_review_max_iterations(),
                 quiet_mode=True,
                 platform=agent.platform,
                 provider=_rt.get("provider") or agent.provider,

@@ -36,6 +36,14 @@ from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
+# Module-level config cache for testability via unittest.mock.patch.
+# Tests patch this to inject config values without reloading.
+try:
+    from hermes_cli.config import load_config_readonly
+    config = load_config_readonly()
+except Exception:
+    config = {}
+
 
 def _strip_aux_credential(value: Any) -> Optional[str]:
     if value is None:
@@ -149,6 +157,15 @@ def _load_config() -> Dict[str, Any]:
     if not isinstance(cur, dict):
         return {}
     return cur
+
+
+def _bg_max_iters() -> int:
+    """Return background_max_iterations from config, capped at 100 (hard ceiling)."""
+    val = (config or {}).get("agent", {}).get("background_max_iterations", 100)
+    try:
+        return min(int(val), 100)
+    except (TypeError, ValueError):
+        return 100
 
 
 def is_enabled() -> bool:
@@ -1946,12 +1963,11 @@ def _run_llm_review(prompt: str) -> Dict[str, Any]:
             request_overrides=_request_overrides,
             **_agent_kwargs,
             enabled_toolsets=["skills", "terminal"],
-            # Umbrella-building over a large skill collection is worth a
-            # high iteration ceiling — the pass typically takes 50-100
-            # API calls against hundreds of candidate skills. The
-            # single-session review path caps itself at a much smaller
-            # number because it's not doing a curation sweep.
-            max_iterations=9999,
+            # Cap iterations at 100 (hard ceiling) or the configured value,
+            # whichever is smaller.  This is a safety guard against runaway
+            # background loops (incident #353M tokens / 20h).  The
+            # single-session review path is capped independently.
+            max_iterations=_bg_max_iters(),
             quiet_mode=True,
             platform="curator",
             skip_context_files=True,
