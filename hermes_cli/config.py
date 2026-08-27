@@ -33,6 +33,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Set
 
+from hermes_cli.fallback_config import (
+    _warn_nested_fallback_placement,
+)
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.secret_prompt import masked_secret_prompt
 
@@ -42,6 +45,9 @@ logger = logging.getLogger(__name__)
 # so concurrent CLI/gateway loads of a broken config.yaml don't spam stderr
 # every time. Cleared automatically when the file changes (different mtime).
 _CONFIG_PARSE_WARNED: set = set()
+
+# Guard for F0.8 nested fallback_providers warning — fires once per process.
+_FALLBACK_NESTED_WARNED: bool = False
 
 
 def _backup_corrupt_config(config_path: Path) -> Optional[Path]:
@@ -3761,6 +3767,14 @@ def _load_config_impl(*, want_deepcopy: bool) -> Dict[str, Any]:
             managed_expanded = _expand_env_vars(managed_normalized)
             expanded = _deep_merge(expanded, managed_expanded)
         _LAST_EXPANDED_CONFIG_BY_PATH[path_key] = copy.deepcopy(expanded)
+
+        # F0.8: warn once per session when fallback_providers is nested under model:.
+        global _FALLBACK_NESTED_WARNED  # noqa: PLW0603
+        if not _FALLBACK_NESTED_WARNED:
+            for w in _warn_nested_fallback_placement(expanded):
+                logger.warning("%s", w)
+            _FALLBACK_NESTED_WARNED = True
+
         if cache_sig is not None:
             # Cache stores a separate deepcopy so subsequent ``load_config()``
             # (deepcopy=True) callers can mutate freely without affecting the

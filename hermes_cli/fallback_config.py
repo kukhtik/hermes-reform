@@ -99,3 +99,33 @@ def get_fallback_chain(config: dict[str, Any] | None) -> list[dict[str, Any]]:
             chain.append(entry)
 
     return chain
+
+
+def _warn_nested_fallback_placement(config_dict: dict) -> list[str]:
+    """Return startup warnings for misplaced ``fallback_providers`` under ``model:``.
+
+    Detects issue #45309: ``fallback_providers`` nested under ``model:`` is
+    silently ignored because the fallback chain resolution only reads the
+    top-level ``fallback_providers`` key.
+
+    Returns a list of warning messages (empty when config is fine).
+    """
+    warnings: list[str] = []
+    nested = config_dict.get("model", {})
+    if not isinstance(nested, dict):
+        return warnings
+    has_nested = "fallback_providers" in nested
+    has_top = "fallback_providers" in config_dict
+
+    if has_nested and not has_top:
+        warnings.append(
+            "WARN: 'fallback_providers' found under 'model:' but top-level "
+            "'fallback_providers' is unset. The nested value is IGNORED. "
+            "Move it to top level: hermes config set fallback_providers ..."
+        )
+    elif has_nested and has_top:
+        warnings.append(
+            "WARN: 'fallback_providers' is set both under 'model:' and at "
+            "top level. The top-level value wins. Remove the nested one."
+        )
+    return warnings
