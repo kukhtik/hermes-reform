@@ -963,6 +963,16 @@ class ResponseStore:
             except Exception:
                 db_path = ":memory:"
         self._db_path: Optional[str] = db_path if db_path != ":memory:" else None
+        if db_path != ":memory:":
+            # Touch the file with 0600 before sqlite3.connect creates it,
+            # so a permissive umask cannot leave the DB world-readable.
+            try:
+                from hermes_cli.config import _secure_file_on_creation
+                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(db_path).touch(mode=0o600)
+                _secure_file_on_creation(Path(db_path))
+            except Exception:
+                pass
         try:
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
         except Exception:
