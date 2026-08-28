@@ -1,0 +1,171 @@
+diff --git a/gateway/authz_mixin.py b/gateway/authz_mixin.py
+index d7b3ca13a..37ac7db87 100644
+--- a/gateway/authz_mixin.py
++++ b/gateway/authz_mixin.py
+@@ -84,6 +84,142 @@ def _coerce_allow_set(raw) -> set[str]:
+     return {part.strip() for part in str(raw).split(",") if part.strip()}
+ 
+ 
++def _normalize_telegram_allowed_users(raw: str) -> tuple[list[str], list[str]]:
++    """Parse and normalize TELEGRAM_ALLOWED_USERS.
++
++    Returns (normalized_ids, garbage_entries).
++    - Whitespace is stripped from each comma-separated entry.
++    - Empty entries are dropped silently.
++    - Entries that look nothing like Telegram numeric IDs or @-prefixed usernames
++      are put in ``garbage_entries`` instead of silently dropped.
++    """
++    import re as _re
++
++    if not raw:
++        return [], []
++    normalized = []
++    garbage = []
++    for part in raw.split(","):
++        part = part.strip()
++        if not part:
++            continue
++        # Valid: purely numeric (e.g. "123456") or @-prefixed username
++        if _re.match(r"^\d+$", part) or _re.match(r"^@[\w]+$", part):
++            normalized.append(part)
++        else:
++            garbage.append(part)
++    return normalized, garbage
++
++
++def _gateway_policy_warnings() -> list["logging.LogRecord"]:
++    """Collect startup policy-validation log records (F1.5).
++
++    Call this at gateway start.  Returns a list of ``logging.LogRecord``
++    objects that the caller emits at the appropriate level
++    (WARNING or CRITICAL — this function does NOT emit them itself,
++    keeping the function testable and the logging level explicit at call site).
++
++    Checks:
++    1. GATEWAY_ALLOW_ALL_USERS=true or per-platform ALLOW_ALL= → CRITICAL
++    2. TELEGRAM_ALLOWED_USERS entries that are clearly garbage → WARNING
++    3. Any platform token present but no user allowlist configured → WARNING
++       (implies open-deny or open-dm depending on platform default)
++    """
++    import logging
++    import re as _re
++
++    records: list[logging.LogRecord] = []
++    _logger = logging.getLogger("gateway.authz_mixin")
++
++    # ── 1. GATEWAY_ALLOW_ALL_USERS ─────────────────────────────────────────
++    if _auth_env("GATEWAY_ALLOW_ALL_USERS").lower() in {"true", "1", "yes"}:
++        _record = _logger.makeRecord(
++            "gateway.authz_mixin", logging.CRITICAL, "(mock)", 0,
++            "CRITICAL: GATEWAY_ALLOW_ALL_USERS=true — all users are authorized "
++            "regardless of allowlists. This is an intentional security downgrade.",
++            (), None,
++        )
++        records.append(_record)
++
++    # Per-platform ALLOW_ALL variants
++    _platform_allow_all_vars = [
++        "TELEGRAM_ALLOW_ALL_USERS", "DISCORD_ALLOW_ALL_USERS",
++        "WHATSAPP_ALLOW_ALL_USERS", "WHATSAPP_CLOUD_ALLOW_ALL_USERS",
++        "SLACK_ALLOW_ALL_USERS", "SIGNAL_ALLOW_ALL_USERS",
++        "EMAIL_ALLOW_ALL_USERS", "SMS_ALLOW_ALL_USERS",
++        "MATTERMOST_ALLOW_ALL_USERS", "MATRIX_ALLOW_ALL_USERS",
++        "DINGTALK_ALLOW_ALL_USERS", "FEISHU_ALLOW_ALL_USERS",
++        "WECOM_ALLOW_ALL_USERS", "WECOM_CALLBACK_ALLOW_ALL_USERS",
++        "WEIXIN_ALLOW_ALL_USERS", "BLUEBUBBLES_ALLOW_ALL_USERS",
++        "QQ_ALLOW_ALL_USERS", "YUANBAO_ALLOW_ALL_USERS",
++    ]
++    for var in _platform_allow_all_vars:
++        if _auth_env(var).lower() in {"true", "1", "yes"}:
++            _record = _logger.makeRecord(
++                "gateway.authz_mixin", logging.CRITICAL, "(mock)", 0,
++                f"CRITICAL: {var}=true — all users on this platform are authorized. "
++                "This is an intentional security downgrade.",
++                (), None,
++            )
++            records.append(_record)
++
++    # ── 2. TELEGRAM_ALLOWED_USERS normalization ─────────────────────────────
++    raw_telegram = _auth_env("TELEGRAM_ALLOWED_USERS")
++    if raw_telegram:
++        _norm, _garbage = _normalize_telegram_allowed_users(raw_telegram)
++        if _garbage:
++            _record = _logger.makeRecord(
++                "gateway.authz_mixin", logging.WARNING, "(mock)", 0,
++                "WARNING: TELEGRAM_ALLOWED_USERS contains %d unrecognized entry(ies) "
++                "that were not used for authorization: %s. "
++                "Valid forms: numeric Telegram user ID (e.g. '123456') or "
++                "@-prefixed username (e.g. '@username').",
++                (_garbage.__len__(), _garbage[:10]), None,  # cap displayed list
++            )
++            records.append(_record)
++
++    # ── 3. Open policy check: bot token present but no allowlist ────────────
++    # We check if any platform token is set (indicating the platform is active)
++    # and no corresponding ALLOW_USERS or GATEWAY_ALLOW_ALL_USERS is set.
++    _platform_token_vars = [
++        ("TELEGRAM", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS"),
++        ("DISCORD", "DISCORD_BOT_TOKEN", "DISCORD_ALLOWED_USERS"),
++        ("WHATSAPP", "WHATSAPP_BOT_TOKEN", "WHATSAPP_ALLOWED_USERS"),
++        ("SLACK", "SLACK_BOT_TOKEN", "SLACK_ALLOWED_USERS"),
++        ("SIGNAL", "SIGNAL Bot TOKEN", "SIGNAL_ALLOWED_USERS"),
++        ("EMAIL", "EMAIL_FROM", "EMAIL_ALLOWED_USERS"),
++        ("MATTERMOST", "MATTERMOST_BOT_TOKEN", "MATTERMOST_ALLOWED_USERS"),
++        ("MATRIX", "MATRIX_HOMESERVER", "MATRIX_ALLOWED_USERS"),
++        ("DINGTALK", "DINGTALK_APP_KEY", "DINGTALK_ALLOWED_USERS"),
++        ("FEISHU", "FEISHU_APP_ID", "FEISHU_ALLOWED_USERS"),
++        ("WECOM", "WECOM_CORP_ID", "WECOM_ALLOWED_USERS"),
++        ("WEIXIN", "WEIXIN_APP_ID", "WEIXIN_ALLOWED_USERS"),
++        ("QQ", "QQ_BOT_APPID", "QQ_ALLOWED_USERS"),
++        ("YUANBAO", "YUANBAO_APP_ID", "YUANBAO_ALLOWED_USERS"),
++    ]
++    _global_allowlist = _auth_env("GATEWAY_ALLOWED_USERS")
++    _allow_all = _auth_env("GATEWAY_ALLOW_ALL_USERS").lower() in {"true", "1", "yes"}
++
++    for _platform, _token_var, _allowlist_var in _platform_token_vars:
++        if _auth_env(_token_var):
++            # Platform is configured. Check if an allowlist or global allow-all exists.
++            if not _auth_env(_allowlist_var) and not _global_allowlist and not _allow_all:
++                _record = _logger.makeRecord(
++                    "gateway.authz_mixin", logging.WARNING, "(mock)", 0,
++                    "WARNING: %s platform is active (%%s is set) but no user allowlist "
++                    "is configured (no %s, no GATEWAY_ALLOWED_USERS, no "
++                    "GATEWAY_ALLOW_ALL_USERS). "
++                    "Default policy is to deny unknown users — this is secure, but "
++                    "if you intended to open DM access, configure %s or set "
++                    "GATEWAY_ALLOW_ALL_USERS=true explicitly."
++                    % (_platform, _allowlist_var, _allowlist_var),
++                    (_token_var,), None,
++                )
++                records.append(_record)
++
++    return records
++
++
+ class GatewayAuthorizationMixin:
+     """User/chat authorization methods for ``GatewayRunner``."""
+ 
+diff --git a/gateway/run.py b/gateway/run.py
+index e56aaaa5d..282937b04 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -12611,6 +12611,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 logger.info("Active profile: %s", _profile)
+         except Exception:
+             pass
++        # F1.5: Policy validation warnings at startup (warn-only, no runtime change)
++        try:
++            from gateway.authz_mixin import _gateway_policy_warnings
++            for _rec in _gateway_policy_warnings():
++                _lvl = _rec.levelno
++                if _lvl == logging.CRITICAL:
++                    logger.critical(_rec.getMessage())
++                elif _lvl == logging.WARNING:
++                    logger.warning(_rec.getMessage())
++                else:
++                    logger.log(_lvl, _rec.getMessage())
++        except Exception:
++            logger.debug("Policy validation warnings unavailable: %s")
+         try:
+             from gateway.status import write_runtime_status
+             write_runtime_status(

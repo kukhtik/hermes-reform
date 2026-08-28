@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\c\Users\Nitro\wt-hermes-reform\f15
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 14 items
+
+tests\gateway\test_gateway_policy_validation.py ..............           [100%]
+
+============================= 14 passed in 0.82s ==============================
