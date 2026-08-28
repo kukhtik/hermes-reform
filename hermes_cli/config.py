@@ -875,6 +875,152 @@ def _secure_file(path):
         pass
 
 
+# ----------------------------------------------------------------------------- #
+# F1.6: Secret-file permissions + env-var substitution + keychain warnings
+# ----------------------------------------------------------------------------- #
+
+_SECRET_FILES = frozenset({
+    "state.db",
+    "response_store.db",
+    "webhook_subscriptions.json",
+    ".env",
+})
+
+
+def _is_secret_file(path: Path) -> bool:
+    return path.name in _SECRET_FILES
+
+
+def _check_secret_file_permissions() -> None:
+    """Warn at startup if any secret file is world-readable (POSIX 0o644+).
+
+    Runs once per HERMES_HOME on startup.  Skipped when HERMES_SKIP_CHMOD is set
+    (same opt-out as :func:`_secure_file`).
+    """
+    if os.environ.get("HERMES_SKIP_CHMOD"):
+        return
+    home = get_hermes_home()
+    for name in _SECRET_FILES:
+        path = home / name
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+            if mode & 0o077:
+                # At least one world/other bit is set
+                logger.warning(
+                    "SECURITY: %s is world-readable (mode=%s); "
+                    "run `chmod 0600 %s` to restrict access.",
+                    path, oct(mode), path,
+                )
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def substitute_env_vars(value: str) -> str:
+    """Resolve ``${VAR}`` env-var substitutions in *value*.
+
+    Syntax: ``${VAR}`` is replaced with ``os.environ[VAR]`` if set,
+    otherwise with an empty string and a WARNING is emitted.
+
+    Literal values (no ``${...}``) are returned unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+
+    def _replace(match: re.Match) -> str:
+        var_name = match.group(1)
+        val = os.environ.get(var_name)
+        if val is None:
+            logger.warning(
+                "SECURITY: env-var ${%s} in config is not set; "
+                "substituting empty string. Set %s in ~/.hermes/.env "
+                "or your shell environment.",
+                var_name, var_name,
+            )
+            return ""
+        return val
+
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", _replace, value, flags=re.MULTILINE)
+
+
+def check_keychain_references(config: dict) -> list:
+    """Check config values for unresolved ``@keychain:`` references.
+
+    The ``@keychain:NAME`` syntax references secrets stored in the OS keychain
+    or an external secret manager.  If the referenced NAME cannot be resolved,
+    a WARNING is emitted and the NAME is added to the returned list.
+
+    Returns a list of unresolved keychain reference names.
+    """
+    unresolved: list = []
+
+    def _scan(obj) -> None:
+        if isinstance(obj, dict):
+            for v in obj.values():
+                _scan(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _scan(item)
+        elif isinstance(obj, str):
+            # Match @keychain:NAME pattern
+            for match in re.finditer(r"@keychain:([A-Za-z0-9_-]+)", obj):
+                name = match.group(1)
+                # Try to resolve via secret_scope — returns None if not found
+                resolved = None
+                try:
+                    from agent.secret_scope import get_secret as _gs
+                    resolved = _gs(name)
+                except Exception:
+                    pass
+                # Also check os.environ directly as fallback
+                if resolved is None:
+                    resolved = os.environ.get(name)
+                if resolved is None:
+                    logger.warning(
+                        "SECURITY: @keychain:%s reference could not be resolved "
+                        "(keychain unavailable or secret not found); "
+                        "this credential will not be available. "
+                        "Ensure your secrets manager is configured.",
+                        name,
+                    )
+                    unresolved.append(name)
+
+    _scan(config)
+    return unresolved
+
+
+def _secure_file_mode(path: Path) -> None:
+    """Set file to 0600 using _secure_file, handling Windows gracefully."""
+    try:
+        _secure_file(path)
+    except Exception:
+        pass
+
+
+def _secure_file_on_creation(path: Path) -> None:
+    """Tighten permissions on a newly-created secret file.
+
+    Uses os.chmod on POSIX; best-effort ACL on Windows (no-op if unavailable).
+    Skipped in managed mode and containers (same as _secure_file).
+    """
+    if is_managed() or _is_container():
+        return
+    try:
+        os.chmod(path, 0o600)
+    except (OSError, NotImplementedError):
+        # Windows: try to set ACL via icacls for current user only
+        try:
+            import subprocess
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r",
+                 f"%USERNAME%:(F)"],
+                capture_output=True, check=False,
+            )
+        except Exception:
+            pass
+
+
 def _ensure_default_soul_md(home: Path) -> None:
     """Seed a default SOUL.md into HERMES_HOME, upgrading legacy empty templates.
 
