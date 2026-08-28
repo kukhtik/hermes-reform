@@ -308,6 +308,40 @@ def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60
             # jobs must keep firing even if profile enumeration breaks.
             _log.exception("Desktop cron: profile enumeration failed; ticking active profile only")
 
+    # F3.6: detect live gateway Discord adapter and pass it to the scheduler
+    # so Discord cron deliveries route through the live gateway session
+    # instead of bypassing it via the standalone _send_to_platform path.
+    adapters: "Optional[dict]" = None
+    loop: "Optional[asyncio.AbstractEventLoop]" = None
+    try:
+        from gateway.run import _gateway_runner_ref
+
+        runner = _gateway_runner_ref()
+        if runner is not None:
+            adapters = {}
+            for platform, adapter in getattr(runner, "adapters", {}).items():
+                if adapter is not None:
+                    adapters[platform] = adapter
+            for mapping in getattr(runner, "_profile_adapters", {}).values():
+                for platform, adapter in (mapping or {}).items():
+                    if adapter is not None and platform not in adapters:
+                        adapters[platform] = adapter
+            # Capture the running event loop so adapter I/O runs on the gateway thread.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            _log.debug(
+                "Desktop cron detected live gateway with %d adapter(s): %s",
+                len(adapters),
+                list(adapters.keys()),
+            )
+    except Exception:
+        _log.debug("Desktop cron: could not detect live gateway adapters")
+
+    start_kwargs["adapters"] = adapters
+    start_kwargs["loop"] = loop
+
     _log.info("Desktop cron scheduler started (provider=%s, interval=%ds)", provider.name, interval)
     provider.start(stop_event, **start_kwargs)
 
