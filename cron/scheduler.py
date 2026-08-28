@@ -4158,8 +4158,29 @@ def _run_job_script(
             stderr = redact_sensitive_text(stderr)
         except Exception as e:
             logger.warning("Failed to redact sensitive text from output: %s", e)
-            stdout = "[REDACTED - redaction failed]"
-            stderr = "[REDACTED - redaction failed]"
+            # Defensive fallback: apply a best-effort regex scrub for env-assignment
+            # and Bearer/AKIA patterns so high-confidence credentials still don't
+            # leak even when the primary redactor raises.  The "[REDACTED]" sentinel
+            # is only used if even the regex fails (should never happen).
+            import re as _re
+            _ENV_PAT = _re.compile(
+                r'[A-Z0-9_]{1,50}(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|PW|CREDENTIAL|AUTH)\s*=\s*\S+',
+                _re.IGNORECASE,
+            )
+            _CREDS_PAT = _re.compile(
+                r'(?:AKIA[A-Z0-9]{16}|'
+                r'Bearer\s+[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|'
+                r'ghp_[A-Za-z0-9]{10,}|'
+                r'sk-[A-Za-z0-9_-]{20,})',
+            )
+            try:
+                stdout = _ENV_PAT.sub('[REDACTED]', stdout)
+                stdout = _CREDS_PAT.sub('[REDACTED]', stdout)
+                stderr = _ENV_PAT.sub('[REDACTED]', stderr)
+                stderr = _CREDS_PAT.sub('[REDACTED]', stderr)
+            except Exception:
+                stdout = "[REDACTED - redaction failed]"
+                stderr = "[REDACTED - redaction failed]"
 
         if proc.returncode != 0:
             parts = [f"Script exited with code {proc.returncode}"]
