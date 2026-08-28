@@ -2868,6 +2868,23 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
+        # Egress domain allowlist gate (F1.2)
+        # Import here to avoid circular imports; guard is lightweight.
+        from tools.egress_guard import check_egress
+
+        allowed, egress_msg = check_egress(command)
+        if not allowed:
+            logger.warning("[egress] %s", egress_msg)
+            return json.dumps({
+                "output": "",
+                "exit_code": 91,
+                "error": egress_msg,
+                "status": "egress_blocked",
+            }, ensure_ascii=False)
+        if egress_msg:
+            # warn policy — log but continue
+            logger.warning("[egress] %s", egress_msg)
+
         # Get configuration
         config = _get_env_config()
         env_type = config["env_type"]
