@@ -1307,7 +1307,7 @@ def _normalize_command_for_detection(command: str) -> str:
                              '\u180e', '\u2060', '\u2061', '\u2062',
                              '\u2063', '\u2064'})
     command = ''.join(ch for ch in command
-                      if unicodedata.category(ch) != ' Cf' or ch not in _STRIP_ZWNJ)
+                      if unicodedata.category(ch) != 'Cf' or ch not in _STRIP_ZWNJ)
     # Collapse shell line continuations (backslash-newline). The shell removes
     # BOTH characters and joins the tokens, so `rm -rf \<newline>/` executes as
     # `rm -rf /`. This must run BEFORE the generic backslash-escape strip below,

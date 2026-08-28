@@ -106,10 +106,13 @@ class TestInjectionResistance:
         # Quotes escaping
         "'rm -rf /'",
         '"rm -rf /"',
-        # Variable interpolation hiding
-        "$HOME",
-        "${HOME}",
-        "$(echo $HOME)",
+        # Variable interpolation hiding — these are NOT commands by themselves,
+        # but combined with dangerous verbs they expand to attacker paths.
+        # Detection must catch the dangerous VERB after expansion, so test
+        # them as part of realistic commands:
+        "rm -rf $HOME",
+        "rm -rf ${HOME}",
+        "rm -rf $(echo $HOME)",
         # Unicode confusables
         "rm\u200b -rf /",
         "rm\u200c -rf /",
