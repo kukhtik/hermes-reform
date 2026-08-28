@@ -12611,6 +12611,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 logger.info("Active profile: %s", _profile)
         except Exception:
             pass
+        # F1.5: Policy validation warnings at startup (warn-only, no runtime change)
+        try:
+            from gateway.authz_mixin import _gateway_policy_warnings
+            for _rec in _gateway_policy_warnings():
+                _lvl = _rec.levelno
+                if _lvl == logging.CRITICAL:
+                    logger.critical(_rec.getMessage())
+                elif _lvl == logging.WARNING:
+                    logger.warning(_rec.getMessage())
+                else:
+                    logger.log(_lvl, _rec.getMessage())
+        except Exception:
+            logger.debug("Policy validation warnings unavailable: %s")
         try:
             from gateway.status import write_runtime_status
             write_runtime_status(
