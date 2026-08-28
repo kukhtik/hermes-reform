@@ -243,6 +243,22 @@ def _scrub_surrogates(value: Any) -> Any:
     return _sanitize_surrogates(value) if isinstance(value, str) else value
 
 
+def _redact_if_str(value: Any) -> Any:
+    """Apply secret redaction to *value* if it is a string, else pass through.
+
+    Used at the SQLite write boundary (:meth:`_insert_message_rows`) to ensure
+    no secret literals leak into persisted transcripts.  The redactor is
+    imported lazily to avoid a circular-dependency risk with the agent stack.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        from agent.redact import redact_sensitive_text as _redact
+        return _redact(value)
+    except Exception:
+        return value
+
+
 def workspace_key(row: Dict[str, Any]) -> Optional[str]:
     """A session's workspace grouping key: its git repo root when known, else
     its cwd.
@@ -11026,7 +11042,7 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 (
                     session_id,
                     role,
-                    self._encode_content(msg.get("content")),
+                    _redact_if_str(self._encode_content(msg.get("content"))),
                     msg.get("tool_call_id"),
                     tool_calls_json,
                     _scrub_surrogates(msg.get("tool_name")),
@@ -11034,8 +11050,8 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                     message_timestamp,
                     msg.get("token_count"),
                     msg.get("finish_reason"),
-                    _scrub_surrogates(msg.get("reasoning")) if role == "assistant" else None,
-                    _scrub_surrogates(msg.get("reasoning_content")) if role == "assistant" else None,
+                    _redact_if_str(_scrub_surrogates(msg.get("reasoning"))) if role == "assistant" else None,
+                    _redact_if_str(_scrub_surrogates(msg.get("reasoning_content"))) if role == "assistant" else None,
                     reasoning_details_json,
                     codex_items_json,
                     codex_message_items_json,
@@ -11043,7 +11059,7 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                     1 if msg.get("observed") else 0,
                     1 if msg.get("_compressed_summary") else 0,
                     1,
-                    _scrub_surrogates(api_content) if isinstance(api_content, str) else None,
+                    _redact_if_str(_scrub_surrogates(api_content)) if isinstance(api_content, str) else None,
                     _scrub_surrogates(msg.get("display_kind")) if isinstance(msg.get("display_kind"), str) else None,
                     self._encode_display_metadata(msg.get("display_metadata")),
                 ),
