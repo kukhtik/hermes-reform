@@ -1,0 +1,182 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Nitro\hermes-reform-local\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Nitro\wt-hermes-reform\f13
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_approval_gates_hardening.py::TestAuthGate::test_batch_runner_without_session_key_blocks_dangerous FAILED [  8%]
+tests/test_approval_gates_hardening.py::TestAuthGate::test_check_all_command_guards_requires_session_context PASSED [ 16%]
+tests/test_approval_gates_hardening.py::TestInjectionResistance::test_detect_dangerous_command_fuzz_all_payloads FAILED [ 25%]
+tests/test_approval_gates_hardening.py::TestInjectionResistance::test_injection_still_detects_base_command PASSED [ 33%]
+tests/test_approval_gates_hardening.py::TestInjectionResistance::test_backtick_injection_detected PASSED [ 41%]
+tests/test_approval_gates_hardening.py::TestInjectionResistance::test_dollar_paren_injection_detected PASSED [ 50%]
+tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_stdio_subprocess_requires_approval FAILED [ 58%]
+tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_shell_wrapper_blocks_dangerous FAILED [ 66%]
+tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_ssh_wrapper_blocks_dangerous FAILED [ 75%]
+tests/test_approval_gates_hardening.py::TestDenyList::test_hardline_deny_list PASSED [ 83%]
+tests/test_approval_gates_hardening.py::TestDenyList::test_deny_list_via_check_all_command_guards PASSED [ 91%]
+tests/test_approval_gates_hardening.py::TestDenyList::test_yolo_cannot_bypass_hardline PASSED [100%]
+
+================================== FAILURES ===================================
+_____ TestAuthGate.test_batch_runner_without_session_key_blocks_dangerous _____
+
+self = <tests.test_approval_gates_hardening.TestAuthGate object at 0x00000293FC64FC50>
+
+    def test_batch_runner_without_session_key_blocks_dangerous(self):
+        """Batch/non-interactive call without session_key must block dangerous cmds.
+    
+        If check_all_command_guards auto-approves when no session_key is set,
+        a remote attacker who can trigger batch_runner with a crafted command
+        bypasses all approval. The fix requires either:
+          (a) deny when no auth context is present (fail-closed), OR
+          (b) require an explicit has_host_access + session_key pairing.
+    
+        Currently FAILS (returns approved=True) → RED.
+        """
+        from tools.approval import check_all_command_guards
+    
+        # Simulate batch runner calling without session context
+        # env_type="local" means subprocess-based (the dangerous path)
+        result = check_all_command_guards(
+            command="rm -rf /home/user/data",
+            env_type="local",
+            has_host_access=True,
+        )
+    
+        # After fix: must NOT auto-approve dangerous commands just because
+        # no session key is present — must go through proper approval flow
+>       assert result["approved"] is False, (
+            f"CVE-2026-9350 REPRO: dangerous command approved without auth context. "
+            f"Result={result}"
+        )
+E       AssertionError: CVE-2026-9350 REPRO: dangerous command approved without auth context. Result={'approved': True, 'message': None}
+E       assert True is False
+
+tests\test_approval_gates_hardening.py:57: AssertionError
+___ TestInjectionResistance.test_detect_dangerous_command_fuzz_all_payloads ___
+
+self = <tests.test_approval_gates_hardening.TestInjectionResistance object at 0x00000293FC64E950>
+
+    def test_detect_dangerous_command_fuzz_all_payloads(self):
+        """All 20 fuzz payloads must be detected as dangerous.
+    
+        detect_dangerous_command must use proper tokenization (shlex-based
+        or equivalent), not naive string search, so injection via shell
+        metacharacters cannot bypass the detector.
+    
+        Currently FAILS (some payloads slip through) → RED.
+        """
+        from tools.approval import detect_dangerous_command
+    
+        failures = []
+        for payload in self.FUZZ_PAYLOADS:
+            is_dangerous, pk, desc = detect_dangerous_command(payload)
+            if not is_dangerous:
+                failures.append((payload, pk, desc))
+    
+>       assert not failures, (
+            f"CVE-2026-9367 REPRO: {len(failures)}/{len(self.FUZZ_PAYLOADS)} "
+            f"fuzz payloads slipped through:\n" +
+            "\n".join(f"  {p!r}  →  was_dangerous={d}" for p, d, _ in failures)
+        )
+E       AssertionError: CVE-2026-9367 REPRO: 5/19 fuzz payloads slipped through:
+E           '$HOME'  →  was_dangerous=None
+E           '${HOME}'  →  was_dangerous=None
+E           '$(echo $HOME)'  →  was_dangerous=None
+E           'rm\u200b -rf /'  →  was_dangerous=None
+E           'rm\u200c -rf /'  →  was_dangerous=None
+E       assert not [('$HOME', None, None), ('${HOME}', None, None), ('$(echo $HOME)', None, None), ('rm\u200b -rf /', None, None), ('rm\u200c -rf /', None, None)]
+
+tests\test_approval_gates_hardening.py:146: AssertionError
+_________ TestMCPGateway.test_mcp_stdio_subprocess_requires_approval __________
+
+self = <tests.test_approval_gates_hardening.TestMCPGateway object at 0x00000293FC64C850>
+
+    def test_mcp_stdio_subprocess_requires_approval(self):
+        """MCP stdio subprocess call must be gated by check_all_command_guards.
+    
+        MCP-wrapped commands (docker, ssh, etc.) that internally call
+        subprocess.run/Popen MUST route through check_all_command_guards.
+        Currently the MCP transport does NOT call approval — it only
+        calls _check_subprocess_security which is weaker.
+    
+        This test verifies that a simulated MCP subprocess call for a
+        dangerous command (docker run --rm busybox rm -rf /) is blocked.
+    
+        FAILS → RED (mcp_tool does NOT currently gate on approval.py).
+        """
+        from tools.approval import check_all_command_guards
+    
+        # Simulate what an MCP-wrapped docker command looks like
+        docker_cmd = "docker run --rm busybox rm -rf /"
+        result = check_all_command_guards(
+            command=docker_cmd,
+            env_type="local",
+            has_host_access=True,
+        )
+    
+        # After fix: must block dangerous MCP-wrapped commands
+>       assert result["approved"] is False, (
+            f"S1 REPRO: MCP-wrapped dangerous command was approved. "
+            f"docker cmd='{docker_cmd}' → approved={result.get('approved')}"
+        )
+E       AssertionError: S1 REPRO: MCP-wrapped dangerous command was approved. docker cmd='docker run --rm busybox rm -rf /' → approved=True
+E       assert True is False
+
+tests\test_approval_gates_hardening.py:227: AssertionError
+___________ TestMCPGateway.test_mcp_shell_wrapper_blocks_dangerous ____________
+
+self = <tests.test_approval_gates_hardening.TestMCPGateway object at 0x00000293FC64CB50>
+
+    def test_mcp_shell_wrapper_blocks_dangerous(self):
+        """sh -c / bash -c wrappers used by MCP must still trigger approval."""
+        from tools.approval import check_all_command_guards
+    
+        # MCP servers commonly use: sh -c "actual command"
+        wrapped = 'sh -c "rm -rf /mnt/data"'
+        result = check_all_command_guards(
+            command=wrapped,
+            env_type="local",
+            has_host_access=True,
+        )
+>       assert result["approved"] is False, (
+            f"S1 REPRO: sh -c wrapped dangerous command approved. "
+            f"Result={result}"
+        )
+E       AssertionError: S1 REPRO: sh -c wrapped dangerous command approved. Result={'approved': True, 'message': None}
+E       assert True is False
+
+tests\test_approval_gates_hardening.py:243: AssertionError
+____________ TestMCPGateway.test_mcp_ssh_wrapper_blocks_dangerous _____________
+
+self = <tests.test_approval_gates_hardening.TestMCPGateway object at 0x00000293FC64C110>
+
+    def test_mcp_ssh_wrapper_blocks_dangerous(self):
+        """ssh-wrapper subprocess (used by some MCP integrations) blocked."""
+        from tools.approval import check_all_command_guards
+    
+        ssh_cmd = "ssh user@host 'rm -rf /important-data'"
+        result = check_all_command_guards(
+            command=ssh_cmd,
+            env_type="local",
+            has_host_access=True,
+        )
+        # ssh with dangerous payload on remote should still be flagged
+>       assert result["approved"] is False, (
+            f"S1 REPRO: ssh-wrapped dangerous command approved. "
+            f"Result={result}"
+        )
+E       AssertionError: S1 REPRO: ssh-wrapped dangerous command approved. Result={'approved': True, 'message': None}
+E       assert True is False
+
+tests\test_approval_gates_hardening.py:259: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_approval_gates_hardening.py::TestAuthGate::test_batch_runner_without_session_key_blocks_dangerous
+FAILED tests/test_approval_gates_hardening.py::TestInjectionResistance::test_detect_dangerous_command_fuzz_all_payloads
+FAILED tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_stdio_subprocess_requires_approval
+FAILED tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_shell_wrapper_blocks_dangerous
+FAILED tests/test_approval_gates_hardening.py::TestMCPGateway::test_mcp_ssh_wrapper_blocks_dangerous
+========================= 5 failed, 7 passed in 2.74s =========================

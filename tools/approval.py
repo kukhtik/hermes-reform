@@ -1297,6 +1297,17 @@ def _normalize_command_for_detection(command: str) -> str:
     command = command.replace('\x00', '')
     # Normalize Unicode (fullwidth Latin, halfwidth Katakana, etc.)
     command = unicodedata.normalize('NFKC', command)
+    # Strip zero-width Unicode characters that could be used to obfuscate
+    # dangerous command words (e.g. U+200B/ZWNJ between "rm" and "-rf")
+    # before pattern matching so injection-resistant detection catches them.
+    # These characters are legitimately invisible in normal text and have
+    # no shell-expansion meaning, so stripping them does not change semantics.
+    # Keep Cf characters only if they are in the safe list below.
+    _STRIP_ZWNJ = frozenset({'\u200b', '\u200c', '\u200d', '\ufeff',
+                             '\u180e', '\u2060', '\u2061', '\u2062',
+                             '\u2063', '\u2064'})
+    command = ''.join(ch for ch in command
+                      if unicodedata.category(ch) != ' Cf' or ch not in _STRIP_ZWNJ)
     # Collapse shell line continuations (backslash-newline). The shell removes
     # BOTH characters and joins the tokens, so `rm -rf \<newline>/` executes as
     # `rm -rf /`. This must run BEFORE the generic backslash-escape strip below,
@@ -4642,6 +4653,26 @@ def check_all_command_guards(command: str, env_type: str,
     # Preserve the existing non-interactive behavior: outside CLI/gateway/ask
     # flows, we do not block on approvals and we skip external guard work.
     if not is_cli and not is_gateway and not is_ask:
+        # CVE-2026-9350: non-interactive local subprocess call without auth
+        # context must still detect dangerous commands and fail closed.
+        # Previously this block auto-approved ALL commands that reached it,
+        # including dangerous ones — a batch runner or MCP wrapper calling
+        # check_all_command_guards without a session key could bypass all
+        # guards. Now we detect dangerous commands first and block them.
+        if env_type == "local":
+            is_dangerous, _pk, _desc = detect_dangerous_command(command)
+            if is_dangerous:
+                return {
+                    "approved": False,
+                    "message": (
+                        f"BLOCKED: {(_desc or 'dangerous command')} "
+                        "in non-interactive context without session approval "
+                        "authority. This command requires an interactive session "
+                        "or pre-approved session context to execute."
+                    ),
+                    "pattern_key": _pk,
+                    "description": _desc,
+                }
         # Single-query (-q) sessions: respect single_query_mode config
         if _is_single_query_approval_context():
             if _get_single_query_approval_mode() == "deny":
