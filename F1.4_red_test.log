@@ -1,0 +1,97 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Nitro\hermes-reform-local\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\c\Users\Nitro\wt-hermes-reform\f14
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_profile_isolation.py::TestSessionsIsolation::test_session_created_in_a_not_visible_in_b PASSED [  8%]
+tests/test_profile_isolation.py::TestSessionsIsolation::test_sessions_dirs_are_different_paths PASSED [ 16%]
+tests/test_profile_isolation.py::TestSkillsIsolation::test_skill_file_created_in_a_not_visible_in_b PASSED [ 25%]
+tests/test_profile_isolation.py::TestSkillsIsolation::test_skills_dirs_are_different_paths PASSED [ 33%]
+tests/test_profile_isolation.py::TestMemoriesIsolation::test_memory_file_created_in_a_not_visible_in_b PASSED [ 41%]
+tests/test_profile_isolation.py::TestMemoriesIsolation::test_memories_dirs_are_different_paths PASSED [ 50%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_not_injected_when_parent_has_none FAILED [ 58%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_injected_when_parent_has_it FAILED [ 66%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_overrides_can_add_hermes_home_when_parent_has_none PASSED [ 75%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_overrides_win_over_parent_hermes_home PASSED [ 83%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_other_env_vars_not_leaked_without_overrides PASSED [ 91%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_helper_result_is_independent_copy FAILED [100%]
+
+================================== FAILURES ===================================
+_ TestSubprocessEnvIsolation.test_hermes_home_not_injected_when_parent_has_none _
+
+self = <tests.test_profile_isolation.TestSubprocessEnvIsolation object at 0x000001EB628C2590>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EB6400C210>
+
+    def test_hermes_home_not_injected_when_parent_has_none(self, monkeypatch):
+        """Without HERMES_HOME in the parent env, child env must not have it."""
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+    
+        env = get_subprocess_env()
+    
+        # The isolation contract: no HERMES_HOME means no HERMES_HOME in child
+>       assert "HERMES_HOME" not in env, (
+            "get_subprocess_env() must NOT inject HERMES_HOME when the parent "
+            "process has no HERMES_HOME set"
+        )
+E       AssertionError: get_subprocess_env() must NOT inject HERMES_HOME when the parent process has no HERMES_HOME set
+E       assert 'HERMES_HOME' not in {'ACLOCAL_PATH': '/mingw64/share/aclocal:/usr/share/aclocal', 'AI_AGENT': 'hermes-agent', 'ALLUSERSPROFILE': 'C:\\ProgramData', 'ANDROID_HOME': 'C:\\Users\\Nitro\\AppData\\Local\\Android\\Sdk', ...}
+
+tests\test_profile_isolation.py:199: AssertionError
+---------------------------- Captured stderr call -----------------------------
+[HERMES_HOME fallback] HERMES_HOME is unset but active profile is 'hermes-meta'. Falling back to C:\Users\Nitro\AppData\Local\hermes, which is the DEFAULT profile — not 'hermes-meta'. Any data this process writes will land in the wrong profile. The subprocess spawner should pass HERMES_HOME explicitly (see issue #18594).
+___ TestSubprocessEnvIsolation.test_hermes_home_injected_when_parent_has_it ___
+
+self = <tests.test_profile_isolation.TestSubprocessEnvIsolation object at 0x000001EB628C2890>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EB63BC7310>
+
+    def test_hermes_home_injected_when_parent_has_it(self, monkeypatch):
+        """With HERMES_HOME in the parent env, child inherits it (correct propagation)."""
+        monkeypatch.setenv("HERMES_HOME", "C:/fake-home")
+    
+        env = get_subprocess_env()
+    
+        assert "HERMES_HOME" in env
+>       assert env["HERMES_HOME"] == "C:/fake-home"
+E       AssertionError: assert 'C:\\fake-home' == 'C:/fake-home'
+E         
+E         - C:/fake-home
+E         ?   ^
+E         + C:\fake-home
+E         ?   ^
+
+tests\test_profile_isolation.py:211: AssertionError
+______ TestSubprocessEnvIsolation.test_helper_result_is_independent_copy ______
+
+self = <tests.test_profile_isolation.TestSubprocessEnvIsolation object at 0x000001EB6268F550>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EB63BC6C90>
+
+    def test_helper_result_is_independent_copy(self, monkeypatch):
+        """Each call returns a fresh dict; mutations don't affect os.environ."""
+        monkeypatch.setenv("HERMES_HOME", "C:/home")
+        env1 = get_subprocess_env()
+        env2 = get_subprocess_env()
+    
+        # Both have HERMES_HOME
+        assert "HERMES_HOME" in env1
+        assert "HERMES_HOME" in env2
+    
+        # But they are independent dicts
+        env1["HERMES_HOME"] = "C:/mutated"
+>       assert env2["HERMES_HOME"] == "C:/home"
+E       AssertionError: assert 'C:\\home' == 'C:/home'
+E         
+E         - C:/home
+E         ?   ^
+E         + C:\home
+E         ?   ^
+
+tests\test_profile_isolation.py:254: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_not_injected_when_parent_has_none
+FAILED tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_injected_when_parent_has_it
+FAILED tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_helper_result_is_independent_copy
+========================= 3 failed, 9 passed in 1.09s =========================

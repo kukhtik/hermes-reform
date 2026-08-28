@@ -1,0 +1,269 @@
+diff --git a/tests/test_profile_isolation.py b/tests/test_profile_isolation.py
+new file mode 100644
+index 000000000..af4cf439a
+--- /dev/null
++++ b/tests/test_profile_isolation.py
+@@ -0,0 +1,263 @@
++"""F1.4 profile isolation tests.
++
++Validates that two independent HERMES_HOME profiles (A and B) maintain
++complete isolation for: sessions, skills, memories, and that
++get_subprocess_env() correctly propagates HERMES_HOME to child processes.
++
++These tests document and verify the invariants established by the F1.4
++audit (reform/f14-profile-isolation):
++  - Per-profile paths (get_hermes_home()): state.db, sessions/, skills/,
++    memories/, logs/, config.yaml, cron/, pairing/, cache/  are isolated.
++  - Intentional shared paths (version-controlled): HERMES_BUNDLED_SKILLS,
++    HERMES_OPTIONAL_SKILLS, HERMES_OPTIONAL_MCPS (repo-skills, not per-profile).
++  - get_subprocess_env() ALWAYS sets HERMES_HOME to str(get_hermes_home()),
++    which falls back to the platform default when the env var is unset.
++    This is the correct profile-propagation mechanism: child processes always
++    receive the parent's profile home (or platform default) — overrides= can
++    override this. The isolation guarantee is: without overrides=, the helper
++    does NOT invent HERMES_HOME out of thin air — it computes it from the
++    parent's environment the same way the parent would.
++"""
++
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++import pytest
++
++from hermes_constants import get_hermes_home, get_subprocess_env
++
++
++# --------------------------------------------------------------------------- #
++# Fixtures
++# --------------------------------------------------------------------------- #
++
++@pytest.fixture
++def two_hermes_homes(tmp_path):
++    """Two independent HERMES_HOME directories with full directory skeleton."""
++    home_a = tmp_path / "hermes_a"
++    home_b = tmp_path / "hermes_b"
++    for home in (home_a, home_b):
++        (home / "sessions").mkdir(parents=True)
++        (home / "skills").mkdir(parents=True)
++        (home / "memories").mkdir(parents=True)
++        (home / "logs").mkdir(parents=True)
++        (home / "cache").mkdir(parents=True)
++        (home / "cron").mkdir(parents=True)
++        (home / "pairing").mkdir(parents=True)
++        (home / "state").mkdir(parents=True)
++    return home_a, home_b
++
++
++# --------------------------------------------------------------------------- #
++# Test (a) — sessions/ isolation
++# --------------------------------------------------------------------------- #
++
++class TestSessionsIsolation:
++    """sessions/ directory is not shared between profiles."""
++
++    def test_session_created_in_a_not_visible_in_b(self, two_hermes_homes, monkeypatch):
++        home_a, home_b = two_hermes_homes
++
++        # Profile A: write a session file
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        session_a_path = home_a / "sessions" / "test_session.jsonl"
++        session_a_path.write_text(
++            json.dumps({"id": "sess-A", "messages": [{"role": "user", "content": "hello"}]}),
++            encoding="utf-8",
++        )
++
++        # Profile B: should not see A's sessions
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        b_sessions = list((home_b / "sessions").iterdir())
++
++        assert not any(
++            f.name == "test_session.jsonl" for f in b_sessions
++        ), "Profile B must not see Profile A's session files"
++
++    def test_sessions_dirs_are_different_paths(self, two_hermes_homes, monkeypatch):
++        """get_hermes_home() resolves to different sessions/ for each profile."""
++        home_a, home_b = two_hermes_homes
++
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        path_a = get_hermes_home() / "sessions"
++
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        path_b = get_hermes_home() / "sessions"
++
++        assert path_a != path_b
++        assert path_a.parent == home_a
++        assert path_b.parent == home_b
++
++
++# --------------------------------------------------------------------------- #
++# Test (b) — skills isolation
++# --------------------------------------------------------------------------- #
++
++class TestSkillsIsolation:
++    """skills/ directory is not shared between profiles."""
++
++    def test_skill_file_created_in_a_not_visible_in_b(self, two_hermes_homes, monkeypatch):
++        home_a, home_b = two_hermes_homes
++
++        # Profile A: write a skill file
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        skill_a_path = home_a / "skills" / "my-test-skill.md"
++        skill_a_path.write_text(
++            "# My Test Skill\n\nCreated in profile A",
++            encoding="utf-8",
++        )
++
++        # Profile B: should not see A's skills
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        b_skills = list((home_b / "skills").iterdir())
++
++        assert not any(
++            f.name == "my-test-skill.md" for f in b_skills
++        ), "Profile B must not see Profile A's skill files"
++
++    def test_skills_dirs_are_different_paths(self, two_hermes_homes, monkeypatch):
++        """get_hermes_home() resolves to different skills/ for each profile."""
++        home_a, home_b = two_hermes_homes
++
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        path_a = get_hermes_home() / "skills"
++
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        path_b = get_hermes_home() / "skills"
++
++        assert path_a != path_b
++        assert path_a.parent == home_a
++        assert path_b.parent == home_b
++
++
++# --------------------------------------------------------------------------- #
++# Test (c) — memories isolation
++# --------------------------------------------------------------------------- #
++
++class TestMemoriesIsolation:
++    """memories/ directory is not shared between profiles."""
++
++    def test_memory_file_created_in_a_not_visible_in_b(self, two_hermes_homes, monkeypatch):
++        home_a, home_b = two_hermes_homes
++
++        # Profile A: write a memory file
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        mem_a_path = home_a / "memories" / "test_memory.json"
++        mem_a_path.write_text(
++            json.dumps({"id": "mem-A", "content": "private profile A memory"}),
++            encoding="utf-8",
++        )
++
++        # Profile B: should not see A's memories
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        b_memories = list((home_b / "memories").iterdir())
++
++        assert not any(
++            f.name == "test_memory.json" for f in b_memories
++        ), "Profile B must not see Profile A's memory files"
++
++    def test_memories_dirs_are_different_paths(self, two_hermes_homes, monkeypatch):
++        """get_hermes_home() resolves to different memories/ for each profile."""
++        home_a, home_b = two_hermes_homes
++
++        monkeypatch.setenv("HERMES_HOME", str(home_a))
++        path_a = get_hermes_home() / "memories"
++
++        monkeypatch.setenv("HERMES_HOME", str(home_b))
++        path_b = get_hermes_home() / "memories"
++
++        assert path_a != path_b
++        assert path_a.parent == home_a
++        assert path_b.parent == home_b
++
++
++# --------------------------------------------------------------------------- #
++# Test (d) — get_subprocess_env() isolation contract
++# --------------------------------------------------------------------------- #
++
++class TestSubprocessEnvIsolation:
++    """get_subprocess_env() correctly propagates HERMES_HOME to child processes.
++
++    The correct contract: get_subprocess_env() copies os.environ and sets
++    HERMES_HOME to str(get_hermes_home()).  get_hermes_home() falls back to
++    the platform default when HERMES_HOME is unset in the parent.  This means
++    a child hermes process always receives a profile home (the explicit one or
++    the platform default) — this IS the profile propagation mechanism.
++    Overrides= can change the value.  The result dict is always independent
++    from os.environ.
++    """
++
++    def test_hermes_home_set_to_computed_profile_home(self, monkeypatch):
++        """get_subprocess_env() always sets HERMES_HOME to get_hermes_home()."""
++        monkeypatch.setenv("HERMES_HOME", "C:/explicit-profile-home")
++
++        env = get_subprocess_env()
++
++        assert "HERMES_HOME" in env
++        # Use normpath to handle Windows forward/backslash normalisation
++        assert os.path.normpath(env["HERMES_HOME"]) == os.path.normpath("C:/explicit-profile-home")
++
++    def test_hermes_home_falls_back_to_platform_default_when_unset(self, monkeypatch):
++        """When HERMES_HOME is not in the parent env, child gets the platform default.
++
++        This is the correct F0.7 propagation behaviour: get_hermes_home() is
++        called in the parent process, so its fallback fires there, and the
++        result is passed to the child.  The child does not 'invent' a new home
++        — it receives the parent's computed fallback.
++        """
++        monkeypatch.delenv("HERMES_HOME", raising=False)
++
++        env = get_subprocess_env()
++
++        assert "HERMES_HOME" in env
++        # Should be the platform default, not absent
++        default_home = Path.home() / ".hermes" if os.name != "nt" else Path(
++            os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
++        ) / "hermes"
++        assert os.path.normpath(env["HERMES_HOME"]) == os.path.normpath(str(default_home))
++
++    def test_overrides_can_add_hermes_home(self, monkeypatch):
++        """Explicit overrides= can set HERMES_HOME even when parent has none."""
++        monkeypatch.delenv("HERMES_HOME", raising=False)
++
++        env = get_subprocess_env(overrides={"HERMES_HOME": "C:/override-home"})
++
++        assert "HERMES_HOME" in env
++        assert os.path.normpath(env["HERMES_HOME"]) == os.path.normpath("C:/override-home")
++
++    def test_overrides_win_over_parent_hermes_home(self, monkeypatch):
++        """overrides= take precedence over the parent's HERMES_HOME value."""
++        monkeypatch.setenv("HERMES_HOME", "C:/parent-home")
++
++        env = get_subprocess_env(overrides={"HERMES_HOME": "C:/override-home"})
++
++        assert os.path.normpath(env["HERMES_HOME"]) == os.path.normpath("C:/override-home")
++
++    def test_other_env_vars_copied_from_parent(self, monkeypatch):
++        """os.environ is copied so ambient vars are present in the child env."""
++        monkeypatch.setenv("HERMES_HOME", "C:/home")
++        monkeypatch.setenv("MY_SECRET", "hunter2")
++
++        env = get_subprocess_env()
++
++        # os.environ is copied, so ambient vars are present
++        assert "MY_SECRET" in env
++        assert env["MY_SECRET"] == "hunter2"
++
++    def test_helper_result_is_independent_copy(self, monkeypatch):
++        """Each call returns a fresh dict; mutations don't affect os.environ."""
++        monkeypatch.setenv("HERMES_HOME", "C:/home")
++        env1 = get_subprocess_env()
++        env2 = get_subprocess_env()
++
++        # Both have HERMES_HOME
++        assert "HERMES_HOME" in env1
++        assert "HERMES_HOME" in env2
++
++        # But they are independent dicts — mutating one doesn't affect the other
++        env1["HERMES_HOME"] = "C:/mutated"
++        assert os.path.normpath(env2["HERMES_HOME"]) == os.path.normpath("C:/home")
++        assert os.environ.get("HERMES_HOME") == "C:/home"

@@ -1,0 +1,23 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Nitro\hermes-reform-local\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\c\Users\Nitro\wt-hermes-reform\f14
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_profile_isolation.py::TestSessionsIsolation::test_session_created_in_a_not_visible_in_b PASSED [  8%]
+tests/test_profile_isolation.py::TestSessionsIsolation::test_sessions_dirs_are_different_paths PASSED [ 16%]
+tests/test_profile_isolation.py::TestSkillsIsolation::test_skill_file_created_in_a_not_visible_in_b PASSED [ 25%]
+tests/test_profile_isolation.py::TestSkillsIsolation::test_skills_dirs_are_different_paths PASSED [ 33%]
+tests/test_profile_isolation.py::TestMemoriesIsolation::test_memory_file_created_in_a_not_visible_in_b PASSED [ 41%]
+tests/test_profile_isolation.py::TestMemoriesIsolation::test_memories_dirs_are_different_paths PASSED [ 50%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_set_to_computed_profile_home PASSED [ 58%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_hermes_home_falls_back_to_platform_default_when_unset PASSED [ 66%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_overrides_can_add_hermes_home PASSED [ 75%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_overrides_win_over_parent_hermes_home PASSED [ 83%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_other_env_vars_copied_from_parent PASSED [ 91%]
+tests/test_profile_isolation.py::TestSubprocessEnvIsolation::test_helper_result_is_independent_copy PASSED [100%]
+
+============================= 12 passed in 0.54s ==============================

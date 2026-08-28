@@ -1,0 +1,25 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Nitro\hermes-reform-local\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\c\Users\Nitro\wt-hermes-reform\f15
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-1.4.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+tests/gateway/test_gateway_policy_validation.py::TestOpenPolicyWithEmptyAllowlist::test_open_dm_policy_no_allowlist_no_allow_all_emits_warning PASSED [  7%]
+tests/gateway/test_gateway_policy_validation.py::TestOpenPolicyWithEmptyAllowlist::test_open_group_policy_no_allowlist_emits_warning PASSED [ 14%]
+tests/gateway/test_gateway_policy_validation.py::TestOpenPolicyWithEmptyAllowlist::test_open_policy_but_allowlist_populated_no_warning PASSED [ 21%]
+tests/gateway/test_gateway_policy_validation.py::TestAllowAllUsersFlag::test_gateway_allow_all_users_emits_critical PASSED [ 28%]
+tests/gateway/test_gateway_policy_validation.py::TestAllowAllUsersFlag::test_telegram_allow_all_users_emits_critical PASSED [ 35%]
+tests/gateway/test_gateway_policy_validation.py::TestAllowAllUsersFlag::test_allow_all_users_false_does_not_emit_critical PASSED [ 42%]
+tests/gateway/test_gateway_policy_validation.py::TestTelegramAllowedUsersNormalization::test_whitespace_stripped PASSED [ 50%]
+tests/gateway/test_gateway_policy_validation.py::TestTelegramAllowedUsersNormalization::test_empty_parts_ignored PASSED [ 57%]
+tests/gateway/test_gateway_policy_validation.py::TestTelegramAllowedUsersNormalization::test_duplicate_normalized_to_set PASSED [ 64%]
+tests/gateway/test_gateway_policy_validation.py::TestTelegramAllowedUsersNormalization::test_garbage_entries_flagged PASSED [ 71%]
+tests/gateway/test_gateway_policy_validation.py::TestTelegramAllowedUsersNormalization::test_email_like_not_silently_ignored PASSED [ 78%]
+tests/gateway/test_gateway_policy_validation.py::TestUnknownFormatNotSilentlyIgnored::test_entries_with_only_special_chars_flagged PASSED [ 85%]
+tests/gateway/test_gateway_policy_validation.py::TestUnknownFormatNotSilentlyIgnored::test_sql_injection_like_entries_flagged PASSED [ 92%]
+tests/gateway/test_gateway_policy_validation.py::TestUnknownFormatNotSilentlyIgnored::test_very_long_nonsense_flagged PASSED [100%]
+
+============================= 14 passed in 0.99s ==============================
