@@ -335,7 +335,7 @@ const TurnRow = memo(function TurnRow({ components, group, resetKey, virtualized
     <div
       className={cn(
         'flex min-w-0 flex-col gap-(--conversation-turn-gap) pb-(--conversation-turn-gap)',
-        virtualized && '[contain-intrinsic-size:auto_37.5rem] [content-visibility:auto]'
+        virtualized && '[contain-intrinsic-size:auto_37.5rem] [content-visibility:hidden]'
       )}
     >
       <MessageRenderBoundary resetKey={resetKey}>

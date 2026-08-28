@@ -112,7 +112,7 @@ const PlainCode: FC<{ code: string }> = ({ code }) => {
     <>
       {chunks.map((chunk, index) => (
         <code
-          className="block whitespace-pre [content-visibility:auto]"
+          className="block whitespace-pre [content-visibility:hidden]"
           key={index}
           style={{ containIntrinsicSize: `auto ${chunk.lines * EST_LINE_PX}px` }}
         >

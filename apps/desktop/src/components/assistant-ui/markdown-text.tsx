@@ -481,7 +481,7 @@ function HugeTextFallback({ containerClassName, text }: { containerClassName?: s
       <ExpandableBlock className="p-2">
         {chunks.map((chunk, index) => (
           <div
-            className="[content-visibility:auto]"
+            className="[content-visibility:hidden]"
             key={index}
             style={{ containIntrinsicSize: `auto ${chunk.lines * 16}px` }}
           >
