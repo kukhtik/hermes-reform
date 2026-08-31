@@ -52,24 +52,30 @@ def cancel_all() -> None:
         _REGISTRY.clear()
 
     for stream in streams:
+        try:
+            loop = asyncio.get_event_loop()
+        except Exception:
+            loop = None
+
+        # If an async loop is running, prefer aclose() fire-and-forget over
+        # blocking sync close().  ManagedLlmStream.close() itself calls
+        # run_until_complete() internally and would block this thread.
+        if loop is not None and callable(getattr(stream, "aclose", None)):
+            try:
+                if loop.is_running():
+                    asyncio.ensure_future(stream.aclose())
+                    continue
+            except Exception:
+                pass
+
+        # Sync path: call stream.close() directly.
+        # Falls through for streams without acloase, or when no loop is running.
         close = getattr(stream, "close", None)
         if callable(close):
             try:
                 close()
             except Exception:
                 pass
-        else:
-            # Fallback: try aclose in a fire-and-forget task if we're in async
-            aclose = getattr(stream, "aclose", None)
-            if callable(aclose):
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.ensure_future(aclose())
-                    else:
-                        loop.run_until_complete(aclose())
-                except Exception:
-                    pass
 
 
 async def cancel_all_async() -> None:
