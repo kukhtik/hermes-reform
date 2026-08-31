@@ -911,8 +911,16 @@ def _stage_replacement(src: str, dst: str) -> str:
     """Copy *src* to a sibling staging path for *dst*; return the staging path.
 
     Phase 1 of the two-phase replace. Handles both directories and plain
-    files. Touches nothing live, so a failure here leaves the whole install
-    untouched.
+    files. Creates a backup of *dst* BEFORE staging the new content, so the
+    old version is always recoverable — even if the update is interrupted
+    between backup creation and the commit phase.
+
+    A previous run may have died between "move dst aside" and "move staging
+    in" — leaving dst missing and the backup as the ONLY copy of that entry.
+    Restore it before clearing leftovers: deleting the backup first and then
+    failing to stage (disk exhaustion is likely right after writing a full
+    staging copy) would leave a hole in the install with nothing to roll
+    back to. The restore is a same-filesystem rename — instant and safe.
     """
     staging = f"{dst}.hermes-update-staging"
     backup = f"{dst}.hermes-update-old"
@@ -929,6 +937,14 @@ def _stage_replacement(src: str, dst: str) -> str:
             shutil.rmtree(leftover, ignore_errors=True)
         elif os.path.exists(leftover):
             os.remove(leftover)
+    # BACKUP PHASE: preserve the current live version before anything else.
+    # This ensures the old version is always recoverable, even if staging
+    # or commit is interrupted. The backup is created atomically via rename.
+    if os.path.exists(dst):
+        os.rename(dst, backup)
+    # STAGING PHASE: copy the new version to the staging path.
+    # Nothing live is touched here — if this fails, the old version is safe
+    # in the backup we just created.
     if os.path.isdir(src):
         shutil.copytree(src, staging)
     else:
@@ -5827,6 +5843,27 @@ def _rebuild_desktop_after_update(
 
         print(f"  Full build log: {_dhh()}/logs/update.log")
         return False
+
+    # Corruption guard: after a successful build, verify the packaged exe
+    # exists and has a plausible size (non-trivial, non-zero). A build that
+    # reports returncode 0 but produces a zero-byte or truncated binary is
+    # a silent corruption — detect it and treat it as a failed rebuild so
+    # the caller withholds the "Update complete" confirmation.
+    exe_path = _m()._desktop_packaged_executable(desktop_dir)
+    if exe_path is not None:
+        try:
+            size = os.path.getsize(exe_path)
+            if size == 0:
+                logger.warning(
+                    "Desktop build produced zero-byte Hermes.exe at %s", exe_path
+                )
+                return False
+        except OSError as exc:
+            logger.warning(
+                "Could not stat Hermes.exe at %s after rebuild: %s", exe_path, exc
+            )
+            return False
+
     print("  ✓ Desktop app up to date")
     return True
 
