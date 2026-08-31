@@ -17,12 +17,11 @@ HERMES_HOME="${HERMES_HOME:-$(mktemp -d)}"
 
 export HERMES_HOME
 export OPENAI_API_KEY="mock-key-for-testing"
-export OPENAI_BASE_URL="http://127.0.0.1:${MOCK_PORT}/v1"
 
 echo "[soak] HERMES_HOME=$HERMES_HOME"
 echo "[soak] Starting mock LLM server on port $MOCK_PORT ..."
 
-# Start mock server in background
+# Start mock server in background (no MODE env var needed — server reads per-request)
 python "$REPO_DIR/scripts/mock_llm_server.py" &
 MOCK_PID=$!
 sleep 0.5
@@ -48,13 +47,13 @@ for i in "${!MODES[@]}"; do
     REQUEST="Tell me a short joke"
     echo ""
     echo "[soak] Run $((i+1))/5 — MODE=$MODE"
-    echo "[soak] > $REQUEST"
-
-    export MODE
 
     START=$(date +%s)
     set +e
-    python -m hermes chat --no-input --plain "$REQUEST" \
+    # Set per-request OPENAI_BASE_URL in a subshell so each iteration
+    # gets the correct mode baked into the URL (mock server reads ?mode=).
+    OPENAI_BASE_URL="http://127.0.0.1:${MOCK_PORT}/v1?mode=${MODE}" \
+        python -m hermes chat --no-input --plain "$REQUEST" \
         > /tmp/hermes_soak_${i}.stdout \
         2> /tmp/hermes_soak_${i}.stderr
     RC=$?

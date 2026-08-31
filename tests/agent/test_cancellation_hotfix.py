@@ -6,10 +6,12 @@ Verifies:
 3. cancel_all() is idempotent
 4. The asyncio get_event_loop/run_until_complete fallback branch is REMOVED
 5. cancel_all() on a slow-close stream does not block > 1 second
+6. close_managed_stream() unregisters but does NOT close the stream
 """
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from unittest import mock
@@ -110,33 +112,38 @@ def test_cancel_all_does_not_block_on_slow_close(monkeypatch: pytest.MonkeyPatch
     assert elapsed < 2.0, f"cancel_all took {elapsed:.1f}s — possible blocking call"
 
 
-def test_successful_completion_does_not_close_via_cancel_layer():
-    """On the success path, _close_managed_stream only unregisters — it does NOT
-    call stream.close().  This prevents the httpx pool teardown that caused hangs.
+def test_close_managed_stream_unregisters_without_closing():
+    """close_managed_stream() unregisters the stream but does NOT call close().
 
-    We test the logic directly by checking that when _close_managed_stream is
-    called on a stream that was registered, the stream is NOT closed.
+    This is the fix for the F0.5 hang: previously, the success-path cleanup
+    called stream.close() which tore down the httpx connection pool and caused
+    the next request to hang.  Now close_managed_stream() only unregisters,
+    leaving close() to be called only by cancel_all() (the /stop signal path).
+
+    We test the module-level helper directly (cancellation.close_managed_stream)
+    because the nested _close_managed_stream in chat_completion_helpers is not
+    importable from outside that module.
     """
-    import asyncio
     from agent import cancellation as _cancellation
-    from agent import chat_completion_helpers as _cch
 
-    # Build an isolated _close_managed_stream that shares the module's registry
-    # and managed_stream_holder via the real module globals.
     stream = FakeStream()
     _cancellation.register_stream(stream)
+    assert stream in _cancellation._REGISTRY, "stream must be registered before test"
 
-    # Simulate what happens on the success path: stream is registered, then
-    # _close_managed_stream is called (success path — not a cancel).
-    # In the FIXED version, _close_managed_stream only unregisters.
-    holder = {"stream": stream}
-    _cancellation.unregister_stream(stream)
-    # NOTE: close() is NOT called here in the fixed version.
+    # Simulate success-path cleanup: close_managed_stream (not cancel_all)
+    _cancellation.close_managed_stream(stream)
 
+    # MUST be unregistered
+    assert stream not in _cancellation._REGISTRY, (
+        "stream should be removed from registry on success path"
+    )
+    # MUST NOT be closed (that is cancel_all's job)
     assert stream.closed is False, (
         "stream.close() was called on the success path — "
         "this is the hang root cause"
     )
+    # MUST NOT be aclosed either
+    assert stream.aclosed is False
 
 
 def test_fallback_run_until_complete_removed():

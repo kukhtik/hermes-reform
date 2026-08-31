@@ -78,7 +78,8 @@ class MockLLMHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
-        print(f"[mock-llm {MODE}] {args[0]}")
+        req_mode = getattr(self, "_req_mode", MODE)
+        print(f"[mock-llm {req_mode}] {args[0]}")
 
     def send_sse(self, chunks: list[str]):
         for chunk in chunks:
@@ -86,16 +87,43 @@ class MockLLMHandler(BaseHTTPRequestHandler):
             self.wfile.write(DELIMITER.encode())
             self.wfile.flush()
 
+    def _current_mode(self) -> str:
+        """Return the mode for this specific request.
+
+        Per-request mode resolution (priority order):
+        1. X-Mock-Mode header
+        2. ?mode= query parameter
+        3. MODE env var (server-wide default)
+
+        The resolved mode is cached on the handler instance so log_message
+        can use it for the per-request [mock-llm mode] prefix.
+        """
+        if hasattr(self, "_req_mode"):
+            return self._req_mode
+        header_mode = self.headers.get("X-Mock-Mode", "").strip().lower()
+        if header_mode:
+            self._req_mode = header_mode
+            return self._req_mode
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        query_mode = params.get("mode", [None])[0]
+        if query_mode:
+            self._req_mode = query_mode.lower()
+            return self._req_mode
+        self._req_mode = MODE
+        return self._req_mode
+
     def do_POST(self):
-        if self.path == "/v1/chat/completions":
+        req_mode = self._current_mode()
+        if self.path.startswith("/v1/chat/completions"):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8") if content_length else ""
 
-            if MODE == "auth_fail":
+            if req_mode == "auth_fail":
                 self.send_error(401, "Unauthorized")
                 return
 
-            if MODE == "hang":
+            if req_mode == "hang":
                 # Send one chunk then never finish — client should timeout
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -110,7 +138,7 @@ class MockLLMHandler(BaseHTTPRequestHandler):
                 while True:
                     time.sleep(60)
 
-            elif MODE == "reset":
+            if req_mode == "reset":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
@@ -123,7 +151,7 @@ class MockLLMHandler(BaseHTTPRequestHandler):
                 # Abruptly close
                 return
 
-            elif MODE == "slow":
+            elif req_mode == "slow":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")

@@ -60,6 +60,7 @@ def run_hermes_chat(request: str, mock_port: int = 9999, timeout: int = 55) -> s
         OPENAI_API_KEY="mock-key-for-testing",
         OPENAI_BASE_URL=f"http://127.0.0.1:{mock_port}/v1",
     )
+    start_time = time.monotonic()
     result = subprocess.run(
         [sys.executable, "-m", "hermes", "chat", "--no-input", "--plain", request],
         cwd=HERMES_REPO,
@@ -68,6 +69,7 @@ def run_hermes_chat(request: str, mock_port: int = 9999, timeout: int = 55) -> s
         text=True,
         timeout=timeout,
     )
+    result.elapsed_time = time.monotonic() - start_time
     return result
 
 
@@ -81,9 +83,11 @@ def test_ok_response_completes(mock_server, hermes_home):
     """A normal 'ok' mock response should complete within the timeout."""
     proc_mock, port = mock_server
     result = run_hermes_chat("Say hello", mock_port=port, timeout=20)
-    # Any non-timeout exit is acceptable for this smoke test
-    # (hermes may fail for other reasons in mock mode, but it shouldn't hang)
-    assert result.returncode != -9, "Process was killed (likely timeout)"
+    # Timeout is enforced by time.monotonic() guard below; returncode alone
+    # is unreliable on Windows (process may exit with non-zero even on success).
+    assert result.elapsed_time < 18.0, (
+        f"ok request took {result.elapsed_time:.1f}s — possible hang"
+    )
 
 
 @pytest.mark.timeout(20)
@@ -91,20 +95,23 @@ def test_slow_response_within_timeout(mock_server, hermes_home):
     """A 'slow' mock response should complete within 20s timeout."""
     proc_mock, port = mock_server
     result = run_hermes_chat("Count to five", mock_port=port, timeout=20)
-    # Just verify no timeout kill
-    assert result.returncode != -9
+    assert result.elapsed_time < 18.0, (
+        f"slow request took {result.elapsed_time:.1f}s — possible hang"
+    )
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(25)
 def test_hang_triggers_timeout(mock_server, hermes_home):
     """A 'hang' mock causes hermes to hit its stream-stale-timeout and exit."""
     proc_mock, port = mock_server
     result = run_hermes_chat("Keep talking", mock_port=port, timeout=20)
-    # hermes should exit, not hang indefinitely
-    # Return code -9 (SIGKILL) indicates timeout was hit — acceptable for hang mode
-    assert result.returncode in (0, -9, 1), (
-        f"Unexpected return code {result.returncode}; "
-        f"stderr: {result.stderr[:500]}"
+    # Hang is detected by the time.monotonic() guard: if hermes got stuck
+    # the elapsed time would be >= 20s (the subprocess timeout).  Any
+    # reasonable exit (returncode 0, -9, 1) is acceptable — the definitive
+    # signal is that the subprocess returned before the hard 25s pytest
+    # timeout.
+    assert result.elapsed_time < 23.0, (
+        f"hung test took {result.elapsed_time:.1f}s — did not exit in time"
     )
 
 
@@ -119,13 +126,15 @@ def test_no_pool_deadlock_after_cancel(mock_server, hermes_home):
     proc_mock, port = mock_server
 
     # First request — let it timeout/hang
-    run_hermes_chat("Make me wait", mock_port=port, timeout=20)
+    result1 = run_hermes_chat("Make me wait", mock_port=port, timeout=20)
 
-    # Second request — must NOT hang; if pool is dead, this times out too
+    # Second request — must NOT hang; if pool is dead, this times out too.
+    # We detect a hang by elapsed time, not returncode (Windows doesn't
+    # reliably sends SIGKILL).
     result2 = run_hermes_chat("Quick reply", mock_port=port, timeout=20)
-    assert result2.returncode != -9, (
-        "Second request hung — httpx pool may be deadlocked after close() "
-        "on the success path"
+    assert result2.elapsed_time < 18.0, (
+        f"Second request took {result2.elapsed_time:.1f}s — "
+        "httpx pool may be deadlocked after close() on the success path"
     )
 
 

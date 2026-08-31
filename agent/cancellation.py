@@ -11,13 +11,49 @@ times and from any thread.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Thread-safe set of registered streams.  Each entry is the stream object;
 # the registry calls stream.close() (sync) for cancellation.
 _REGISTRY: set[Any] = set()
 _REGISTRY_LOCK = threading.Lock()
+
+# Track live fire-and-forget tasks so they are never silently discarded.
+# Python logs "Task exception never retrieved" when a task fails and its
+# result is never awaited — adding a done-callback that discards + logs
+# suppresses that warning while keeping the task alive until it finishes.
+_LIVE_TASKS: set[asyncio.Task[Any]] = set()
+_LIVE_TASKS_LOCK = threading.Lock()
+
+
+def _discard_and_log(task: asyncio.Task[Any]) -> None:
+    """Done-callback: suppress 'Task exception never retrieved' warning.
+
+    Without this, any task whose coroutine raises (e.g. aclose() on a
+    stream that is already closed) would produce a logged exception when
+    the task is garbage-collected without being awaited.
+    """
+    try:
+        _ = task.result()
+    except BaseException as exc:
+        logger.debug("fire-and-forget aclose() task raised: %s", exc)
+
+
+def _track_task(task: asyncio.Task[Any]) -> None:
+    with _LIVE_TASKS_LOCK:
+        _LIVE_TASKS.add(task)
+    task.add_done_callback(_discard_and_log)
+    # Keep only a bounded set; remove on done to avoid unbounded growth
+    # across many cancel_all() calls in long-running processes.
+    task.add_done_callback(
+        lambda t: _LIVE_TASKS.discard(t)
+        if t in _LIVE_TASKS
+        else None
+    )
 
 
 def register_stream(stream: Any) -> None:
@@ -36,6 +72,19 @@ def unregister_stream(stream: Any) -> None:
     """
     with _REGISTRY_LOCK:
         _REGISTRY.discard(stream)
+
+
+def close_managed_stream(stream: Any) -> None:
+    """Unregister a stream from the cancellation registry without closing it.
+
+    This is the SUCCESS-PATH cleanup for ManagedLlmStream: after a stream is
+    fully consumed, call this to remove it from the registry WITHOUT invoking
+    stream.close() — which would tear down the httpx connection pool and cause
+    the next request to hang.
+
+    Only cancel_all() (user /stop signal) is allowed to call stream.close().
+    """
+    unregister_stream(stream)
 
 
 def cancel_all() -> None:
@@ -63,7 +112,8 @@ def cancel_all() -> None:
         if loop is not None and callable(getattr(stream, "aclose", None)):
             try:
                 if loop.is_running():
-                    asyncio.ensure_future(stream.aclose())
+                    task = asyncio.ensure_future(stream.aclose())
+                    _track_task(task)
                     continue
             except Exception:
                 pass

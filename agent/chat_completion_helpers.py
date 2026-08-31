@@ -3821,14 +3821,11 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
         stream = managed_stream_holder.pop("stream", None)
         if stream is None:
             return
-        _cancellation.unregister_stream(stream)
-        # NOTE: on the SUCCESS path we only unregister — close() is NOT called here.
-        # The stream wrapper (ManagedLlmStream) is closed by its consumer / context
-        # manager after iteration finishes.  Calling close() from this cleanup
-        # helper would redundantly tear down an already-exhausted (or never-started)
-        # async stream and can cause the next request to hang on the httpx pool
-        # because the connection is closed while still checked out.
-        # Only cancel_all() (user /stop signal) is allowed to call stream.close().
+        # Use the module-level helper: it unregisters WITHOUT calling close().
+        # This is intentional — on the success path the stream is already
+        # exhausted; close() would tear down the httpx pool and cause the next
+        # request to hang.  Only cancel_all() (user /stop signal) may close.
+        _cancellation.close_managed_stream(stream)
 
     def _start_stream_attempt() -> int:
         with stream_attempt_lock:
