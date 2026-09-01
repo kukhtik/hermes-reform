@@ -3381,6 +3381,20 @@ class AIAgent:
                 _abort_active_request("interrupt_abort")
             except Exception:
                 logger.debug("Failed to abort active inline request", exc_info=True)
+        # F0.5: a hard stop (/stop) must also kill any in-flight httpx streams
+        # registered by interruptible_streaming_api_call. This runs ONLY on the
+        # stop path — NOT on the first-delta spinner hook, and NOT on plain
+        # redirect interrupts (steer), which rebuild the current turn via
+        # per-request abort instead of tearing down every registered stream.
+        if hard_cancel:
+            from agent.cancellation import cancel_all
+
+            try:
+                cancel_all()
+            except Exception:
+                logger.debug(
+                    "cancel_all() after hard interrupt failed", exc_info=True
+                )
         # Signal all tools to abort any in-flight operations immediately.
         # Scope the interrupt to this agent's execution thread so other
         # agents running in the same process (gateway) are not affected.
