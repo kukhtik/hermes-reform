@@ -1,0 +1,6 @@
+name: gateway-noise-filter
+version: 1.0.0
+description: "Classify inbound gateway messages with a deterministic rule before dispatch, so machine-originated notices never wake the agent. Observe-only by default; set plugins.gateway_noise_filter.drop to skip them."
+author: "NousResearch"
+hooks:
+  - pre_gateway_dispatch

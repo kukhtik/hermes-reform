@@ -15872,6 +15872,34 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
         totals = dict(cur3.fetchone())
         usage = InsightsEngine(db).get_usage_breakdown(days=days)
 
+        # Efficiency block: what the full tool schema costs, what narrowing
+        # removes, and what a local judge would cost instead of tokens.
+        # Estimates from measured constants — see
+        # docs/middleware/toolset-narrowing-app-wide.md and
+        # agent/efficiency_metrics.py. Message kinds are sampled from the
+        # window so the structural share reflects this profile, not a guess.
+        try:
+            from agent.efficiency_metrics import build_efficiency
+            from agent.structural_classify import classify_message
+
+            kind_rows = db._conn.execute("""
+                SELECT role, tool_calls FROM messages
+                WHERE content IS NOT NULL AND length(content) > 40
+                LIMIT 2000
+            """).fetchall()
+            kinds = [
+                classify_message(role=r[0], tool_calls=r[1])
+                for r in kind_rows
+            ]
+            efficiency = build_efficiency(
+                api_calls=int(totals.get("total_api_calls") or 0),
+                input_tokens=int(totals.get("total_input") or 0),
+                message_kinds=kinds,
+            )
+        except Exception as exc:  # never fail the page over a metric
+            _log.warning("efficiency metrics unavailable: %s", exc)
+            efficiency = None
+
         return {
             "daily": daily,
             "by_model": by_model,
@@ -15884,6 +15912,10 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
             # Per-tool-name call counts (already computed by InsightsEngine);
             # the desktop Capabilities page aggregates these per toolset.
             "tools": usage["tools"],
+            # Estimated savings from narrowing the advertised tool schema, the
+            # rule-classified share of the message stream, and the cost of a
+            # local decision judge. ``None`` when uncomputable — never faked.
+            "efficiency": efficiency,
         }
     finally:
         db.close()

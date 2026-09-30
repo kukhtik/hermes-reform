@@ -2138,6 +2138,35 @@ export interface AnalyticsSkillsSummary {
   distinct_skills_used: number;
 }
 
+/** Estimated savings and rule coverage. Constants come from measured runs;
+ *  see docs/middleware/toolset-narrowing-app-wide.md. */
+export interface AnalyticsEfficiency {
+  narrowing: {
+    tokens_per_call_full: number;
+    tokens_per_call_narrowed: number;
+    tokens_saved_per_call: number;
+    tokens_saved_total: number;
+    share_of_input_pct: number;
+  };
+  judge: {
+    calls: number;
+    tokens: number;
+    warm_seconds_each: number;
+    cold_seconds_once: number;
+    wall_seconds_warm: number;
+    resident_rss_mb: number;
+  };
+  structural: {
+    total: number;
+    structural: number;
+    structural_pct: number;
+    by_kind: Record<string, number>;
+  } | null;
+  measured_rule_coverage_pct: number;
+  estimated: boolean;
+  source: string;
+}
+
 export interface AnalyticsResponse {
   daily: AnalyticsDailyEntry[];
   by_model: AnalyticsModelEntry[];
@@ -2155,6 +2184,8 @@ export interface AnalyticsResponse {
     summary: AnalyticsSkillsSummary;
     top_skills: AnalyticsSkillEntry[];
   };
+  /** Null when the backend could not compute the estimates. */
+  efficiency?: AnalyticsEfficiency | null;
 }
 
 export interface ActiveProfileInfo {

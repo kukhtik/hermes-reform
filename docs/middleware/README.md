@@ -5,6 +5,18 @@ Observer hooks report what happened. Middleware can change what happens by
 rewriting a request before execution or by wrapping the execution callback
 itself.
 
+## Decisions and designs in this directory
+
+- [`toolset-narrowing-app-wide.md`](toolset-narrowing-app-wide.md) — ADR:
+  narrow the advertised tool schema per step via `llm_request` middleware,
+  app-wide across all profiles. Includes the measured −12 750 tokens/call
+  against a +1.97 ms overhead, and the profile/managed-scope enablement path.
+- [`structural-classification-by-rule.md`](structural-classification-by-rule.md)
+  — ADR: classify session-stream messages with a deterministic rule (role +
+  structural markers, 100% coverage in 1 ms) instead of a decision model, with
+  the measured evidence for why the model was rejected for this task and the
+  conditions under which it *would* be justified.
+
 This contract is intentionally backend-neutral. A plugin can use it for local
 policy, request shaping, tracing, adaptive routing, cache control, sandbox
 selection, or handoff to runtimes such as NeMo Relay without changing Hermes'

@@ -15,6 +15,7 @@ import type {
   AnalyticsDailyEntry,
   AnalyticsModelEntry,
   AnalyticsSkillEntry,
+  AnalyticsEfficiency,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -403,6 +404,67 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Efficiency estimates
+// ---------------------------------------------------------------------------
+
+/** Estimated savings from narrowing the tool schema, the rule-classified share
+ *  of the stream, and what a local judge costs. All figures are estimates from
+ *  measured constants; the card says so and renders nothing when the backend
+ *  could not compute them. */
+function EfficiencyCard({ efficiency }: { efficiency?: AnalyticsEfficiency | null }) {
+  if (!efficiency) return null;
+  const { narrowing, structural, judge } = efficiency;
+
+  const items = [
+    {
+      label: "Tool schema (full)",
+      value: formatTokens(narrowing.tokens_per_call_full),
+    },
+    {
+      label: "Tool schema (narrowed)",
+      value: formatTokens(narrowing.tokens_per_call_narrowed),
+    },
+    {
+      label: "Saved per call",
+      value: formatTokens(narrowing.tokens_saved_per_call),
+    },
+    {
+      label: "Saved in period",
+      value: `${formatTokens(narrowing.tokens_saved_total)} (~${narrowing.share_of_input_pct}%)`,
+    },
+  ];
+  if (structural) {
+    items.push({
+      label: "Rule-classified messages",
+      value: `${structural.structural_pct}% (${structural.structural}/${structural.total})`,
+    });
+  }
+  items.push({
+    label: "Local judge RSS",
+    value: `${(judge.resident_rss_mb / 1024).toFixed(1)} GB`,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <TrendingUp className="h-4 w-4" />
+          Efficiency estimates
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Stats items={items} />
+        <p className="text-xs mt-4 text-text-tertiary">
+          Estimates from measured constants ({efficiency.source}). A local judge
+          answers in {judge.warm_seconds_each}s warm ({judge.cold_seconds_once}s
+          cold) for zero tokens.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<AnalyticsResponse | null>(null);
@@ -579,6 +641,7 @@ export default function AnalyticsPage() {
           <DailyTable daily={data.daily} />
           <ModelTable models={data.by_model} />
           <SkillTable skills={data.skills.top_skills} />
+          <EfficiencyCard efficiency={data.efficiency} />
         </>
       )}
 

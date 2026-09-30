@@ -1,0 +1,7 @@
+name: toolset-narrow
+version: 1.0.0
+description: "Narrow the advertised tool schema per step via llm_request middleware. Cuts ~12 750 input tokens per call (96% of the tool schema) at a +1.97 ms middleware cost. Fail-open: an ambiguous step keeps the full tool set."
+author: "NousResearch"
+hooks: []
+middleware:
+  - llm_request
