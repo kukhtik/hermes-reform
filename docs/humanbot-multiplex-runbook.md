@@ -150,3 +150,57 @@ old poller — only after the Windows multiplexer is stopped, or the 409 war ret
   `273613→research-parent`, `273637→pena-bot`, root DM → default
 - Gateway: `telegram=connected`, "polling confirmed healthy", cron ticking 14 profiles
 - `hermes send` delivered to the DM (operator confirmed the message arrived)
+
+## 8. Post-cutover fixes (2026-09-30, evening)
+
+Two bugs surfaced the first time a routed topic turn actually ran, both invisible
+from the Desktop app (the desktop backend reads its own process env; routed
+gateway turns read the *profile's* `.env`):
+
+### 8.1 Provider auth failed in every routed turn
+
+Symptom (gateway log, `profiles/research-parent/logs/gateway.log`):
+
+```
+WARNING gateway.run: Primary provider auth failed: No usable credentials found
+for provider 'ollama-cloud'. Set OLLAMA_API_KEY. — trying fallback
+```
+
+Cause: under `multiplex_profiles` the per-turn secret scope is built **only** from
+`<profile>/.env` (`agent/secret_scope.py::build_profile_secret_scope`, fail-closed
+so profiles cannot leak into each other). Eight profiles — `default`, `family-tree`,
+`geo-converter`, `mpt`, `pena-bot`, `research-parent`, `trading-bot`, `wnn` — kept
+`OLLAMA_API_KEY` only in the *machine* user env (set for the desktop app), never in
+their own `.env`, so every routed turn raised `AuthError(missing_api_key)`.
+
+Fix: append `OLLAMA_API_KEY=…` to each affected `<profile>/.env` (same value as the
+Windows user environment variable `OLLAMA_API_KEY`), then `hermes gateway restart`.
+
+Rule of thumb for this machine: **any credential a profile's configured model needs
+must exist in that profile's own `.env`** — the user-level env vars only serve the
+desktop backend, not multiplexed gateway turns.
+
+### 8.2 Retired model `deepseek-v4-flash:0731`
+
+The second failure after fixing auth was HTTP 410 from ollama-cloud:
+
+```
+{"error":{"message":"deepseek-v4-flash:0731 was retired at 2026-09-25 00:00:00 -0700 PDT ..."}}
+```
+
+`deepseek-v4-flash:0731` was in `model.default` for five profiles (`default`,
+`orchestrator`, `research-parent`, `wnn`, `worker-analyst`). Replacement —
+`deepseek-v4.1-flash` (verified live, HTTP 200; it is also the model the working
+desktop sessions already ran). `hermes migrate` only covers xAI retirements, so the
+swap is a manual `config.yaml` edit on each profile.
+
+Verification pass after both fixes (resolve in multiplex scope + live completion,
+`OLLAMA_API_KEY` absent from `os.environ`): all 13 multiplexed profiles → HTTP 200.
+
+### 8.3 Telegram receive-path hiccups
+
+Around 17:40 and 18:06–18:09 the log showed `Sticky Telegram path … failed` /
+`Dual-stack api.telegram.org path failed` and one `telegram_network_error` rebuild.
+These were transient network flaps, not config; the adapter reconnected on its own
+(`polling confirmed healthy`), no action needed. A 409 window after each restart is
+normal (§5.2).
